@@ -1,0 +1,68 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: ai-rag-orchestrator
+
+  # ==============================================================
+  # ORACLE DATABASE CONFIGURATION
+  # ==============================================================
+#  datasource:
+#    url: jdbc:oracle:thin:@//${DB_HOST:localhost}:1521/${DB_SERVICE:ORCL}
+#    username: ${DB_USER:system}
+#    password: ${DB_PASS:oracle}
+#    driver-class-name: oracle.jdbc.OracleDriver
+##    hikari:
+##      maximum-pool-size: 20
+##      minimum-idle: 5
+##      connection-timeout: 30000
+##      # Oracle Validation Query
+##      connection-test-query: SELECT 1 FROM DUAL
+#
+#  jpa:
+#    open-in-view: false
+#    show-sql: false
+#    hibernate:
+#      ddl-auto: validate # Use 'validate' in production
+#    properties:
+#      hibernate:
+#        dialect: org.hibernate.dialect.OracleDialect
+#        format_sql: true
+
+# ==============================================================
+# CUSTOM APP PROPERTIES
+# ==============================================================
+app:
+  workspace-dir: ${WORKSPACE_DIR:/tmp/ai-orchestrator-workspace}
+  git:
+    default-prefix: "feature/"
+    prefixes:
+      "Story": "feature/"
+      "Bug": "bugfix/"
+  jira:
+    base-url: https://${JIRA_DOMAIN}.atlassian.net
+    username: ${JIRA_USER}
+    token: ${JIRA_TOKEN}
+    fields:
+      repo-name-field-id: customfield_10141
+      repo-url-field-id: customfield_10142
+      base-branch-field-id: customfield_10144
+      acceptance-criteria-field-id: customfield_10143
+
+  bitbucket:
+    base-url: https://api.bitbucket.org/2.0
+    workspace: ${BITBUCKET_WORKSPACE}
+    username: ${BITBUCKET_USER}
+    app-password: ${BITBUCKET_PASS}
+    api-username: ${BITBUCKET_API_USER}
+
+  gemini:
+    api-key: ${GEMINI_KEY}
+    chat-model: gemini-flash-latest
+    embedding-model: text-embedding-004
+
+  pinecone:
+    api-key: ${PINECONE_KEY}
+    index-name: ${PINECONE_INDEX}

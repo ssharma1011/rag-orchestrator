@@ -12,6 +12,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import reactor.util.retry.Retry;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -28,7 +29,7 @@ public class GeminiClient {
     // -----------------------------------------------------------------------
     // 1. EMBEDDING (Vector Logic)
     // -----------------------------------------------------------------------
-    public List<Double> createEmbedding(String text) {
+  /*  public List createEmbedding(String text) {
         String model = props.getGemini().getEmbeddingModel();
         String url = "/v1beta/models/" + model + ":embedContent?key=" + props.getGemini().getApiKey();
 
@@ -51,7 +52,7 @@ public class GeminiClient {
             log.error("Embedding failed", e);
             throw new RuntimeException("Failed to embed requirements");
         }
-    }
+    }*/
 
     // -----------------------------------------------------------------------
     // 2. SCAFFOLDING (New Projects) - The "Architect" Mode
@@ -78,7 +79,7 @@ public class GeminiClient {
                - The **Repository** Interface (extending JpaRepository)
                - The **Service** Class (Business Logic)
                - The **Controller** Class (REST Endpoints)
-            3. **Completeness Protocol**: 
+            3. **Completeness Protocol**:
                - Do NOT leave files as comments.
                - If Class A imports Class B, **you MUST generate Class B** in the 'edits' list.
                - Ensure the package structure is consistent (e.g., com.product.management...).
@@ -126,7 +127,7 @@ public class GeminiClient {
             INSTRUCTIONS:
             1. **Analyze Context**: Use the provided files to understand the ACTUAL project package structure and libraries.
             2. **Modifications**: If an existing class needs changes, output an edit with "op": "modify".
-            3. **New Files (CRITICAL)**: 
+            3. **New Files (CRITICAL)**:
                - If the requirement implies a new DTO, Entity, or Service that does NOT exist in the context, **YOU MUST CREATE IT**.
                - Use "op": "create".
                - **IMPORTANT**: Use the SAME package structure found in the Context.
@@ -134,10 +135,10 @@ public class GeminiClient {
             OUTPUT SCHEMA (Strict JSON):
             {
               "branch_name": "feat/<jira-key>-implementation",
-              "edits": [ 
+              "edits": [
                 // PATTERN 1: Modify existing file (Use actual paths from Context)
                 { "path": "<EXISTING_FILE_PATH>", "op": "modify", "content": "<FULL_UPDATED_CONTENT>" },
-                
+            
                 // PATTERN 2: Create NEW file (Derive path from Context structure)
                 { "path": "<NEW_FILE_PATH>", "op": "create", "content": "<FULL_NEW_CONTENT>" }
               ],
@@ -235,5 +236,115 @@ public class GeminiClient {
             """.formatted(originalRequirements, buildLogs);
 
         return callChatApi(prompt);
+    }
+
+
+    // ADD THESE METHODS TO: src/main/java/com/purchasingpower/autoflow/client/GeminiClient.java
+
+// -----------------------------------------------------------------------
+// BATCH EMBEDDING (Optimized for AST Chunking)
+// -----------------------------------------------------------------------
+
+    /**
+     * Creates embeddings for multiple texts in a single batch request.
+     * Much faster than calling createEmbedding() in a loop.
+     * Gemini supports up to 100 texts per batch. This method automatically
+     * splits larger lists into multiple batch requests.
+     *
+     * @param texts List of texts to embed (class summaries, method bodies, etc.)
+     * @return List of embedding vectors (same order as input)
+     *
+     * Performance: 1000 texts = ~10 API calls instead of 1000 individual calls
+     */
+    public List<List<Double>> batchCreateEmbeddings(List<String> texts) {
+        if (texts == null || texts.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        log.info("Creating embeddings for {} texts using batch API", texts.size());
+
+        List<List<Double>> allEmbeddings = new ArrayList<>();
+        int batchSize = 100; // Gemini's batch limit
+
+        // Split into batches of 100
+        for (int i = 0; i < texts.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, texts.size());
+            List<String> batch = texts.subList(i, end);
+
+            log.debug("Processing batch {}-{} of {}", i, end, texts.size());
+
+            List<List<Double>> batchEmbeddings = callBatchEmbeddingApi(batch);
+            allEmbeddings.addAll(batchEmbeddings);
+
+            // Throttle between batches to avoid rate limits
+            if (end < texts.size()) {
+                try {
+                    Thread.sleep(2000); // 2 second delay between batches
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException("Embedding interrupted", e);
+                }
+            }
+        }
+
+        log.info("Created {} embeddings successfully", allEmbeddings.size());
+        return allEmbeddings;
+    }
+
+    /**
+     * Internal method: Calls Gemini's batch embedding API.
+     * Do not call directly - use batchCreateEmbeddings() instead.
+     */
+    private List<List<Double>> callBatchEmbeddingApi(List<String> batch) {
+        String model = props.getGemini().getEmbeddingModel();
+        String url = "/v1beta/models/" + model + ":batchEmbedContents?key=" + props.getGemini().getApiKey();
+
+        // Build batch request body
+        List<Map<String, Object>> requests = batch.stream()
+                .map(text -> Map.of(
+                        "model", "models/" + model,
+                        "content", Map.of("parts", List.of(Map.of("text", text)))
+                ))
+                .toList();
+
+        Map<String, Object> body = Map.of("requests", requests);
+
+        try {
+            JsonNode response = geminiWebClient.post().uri(url).bodyValue(body)
+                    .retrieve().bodyToMono(JsonNode.class)
+                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(2)).filter(this::isRetryable))
+                    .block();
+
+            // Parse response
+            List<List<Double>> embeddings = new ArrayList<>();
+            assert response != null;
+            JsonNode embeddingsNode = response.path("embeddings");
+
+            if (embeddingsNode.isArray()) {
+                for (JsonNode embeddingNode : embeddingsNode) {
+                    List<Double> embedding = objectMapper.convertValue(
+                            embeddingNode.path("values"),
+                            List.class
+                    );
+                    embeddings.add(embedding);
+                }
+            }
+
+            return embeddings;
+
+        } catch (Exception e) {
+            log.error("Batch embedding failed for {} texts", batch.size(), e);
+            throw new RuntimeException("Failed to batch embed texts", e);
+        }
+    }
+
+    /**
+     * Legacy single embedding method (kept for backward compatibility).
+     * For new code, prefer batchCreateEmbeddings() for better performance.
+     */
+    public List<Double> createEmbedding(String text) {
+        // Fallback: Use batch API with single item
+        List<List<Double>> result = batchCreateEmbeddings(List.of(text));
+        return result.isEmpty() ? new ArrayList<>() : result.get(0);
     }
 }

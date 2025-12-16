@@ -1,13 +1,14 @@
 package com.purchasingpower.autoflow.model.ast;
 
-
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Metadata extracted from a Java method during AST parsing.
@@ -58,12 +59,19 @@ public class MethodMetadata {
     private String methodBody;
 
     /**
-     * Methods called within this method body
+     * Methods called within this method body (Simple names for now)
      * Example: [buildMaintainerPrompt, callChatApi, objectMapper.readValue]
-     * Used for dependency graph construction
      */
     @Builder.Default
     private List<String> calledMethods = new ArrayList<>();
+
+    /**
+     * RICH CALL GRAPH EDGES:
+     * Specific method-to-method calls.
+     * Ready for Graph DB.
+     */
+    @Builder.Default
+    private Set<DependencyEdge> methodCalls = new HashSet<>();
 
     /**
      * Exceptions declared in throws clause: [IOException, RuntimeException]

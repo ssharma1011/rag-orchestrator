@@ -6,7 +6,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Metadata extracted from a Java class/interface/enum during AST parsing.
@@ -18,80 +20,46 @@ import java.util.List;
 @AllArgsConstructor
 public class ClassMetadata {
 
-    /**
-     * Fully qualified name: com.purchasingpower.autoflow.client.GeminiClient
-     */
     private String fullyQualifiedName;
-
-    /**
-     * Package name: com.purchasingpower.autoflow.client
-     */
     private String packageName;
-
-    /**
-     * Simple class name: GeminiClient
-     */
     private String className;
 
-    /**
-     * Annotations present on the class: [@Component, @Slf4j, @RequiredArgsConstructor]
-     */
     @Builder.Default
     private List<String> annotations = new ArrayList<>();
 
-    /**
-     * Interfaces implemented by this class: [ClientInterface, Retryable]
-     */
     @Builder.Default
     private List<String> implementedInterfaces = new ArrayList<>();
 
-    /**
-     * Superclass (if extends something): BaseClient, Object, etc.
-     */
     private String superClass;
 
-    /**
-     * All import statements from the file (for library detection)
-     * Example: [org.springframework.stereotype.Component, lombok.extern.slf4j.Slf4j]
-     */
     @Builder.Default
     private List<String> importedClasses = new ArrayList<>();
 
-    /**
-     * High-level libraries detected from imports (Spring, Lombok, JPA, etc.)
-     * Derived from importedClasses during parsing
-     */
     @Builder.Default
     private List<String> usedLibraries = new ArrayList<>();
 
     /**
-     * Whether the class is abstract
+     * PRODUCTION-GRADE GRAPH EDGES:
+     * Detailed relationships including Type and Cardinality.
+     * Ready for Graph DB export.
      */
+    @Builder.Default
+    private Set<DependencyEdge> dependencies = new HashSet<>();
+
+    @Builder.Default
+    private List<String> innerClasses = new ArrayList<>();
+
+    /**
+     * NEW: Roles detected based on annotations/imports (e.g., "spring-kafka:consumer")
+     */
+    @Builder.Default
+    private List<String> roles = new ArrayList<>();
+
     private boolean isAbstract;
-
-    /**
-     * Whether this is an interface
-     */
     private boolean isInterface;
-
-    /**
-     * Whether this is an enum
-     */
     private boolean isEnum;
-
-    /**
-     * Total line count of the file
-     */
+    private boolean isInnerClass;
     private int lineCount;
-
-    /**
-     * Relative path from project root: src/main/java/com/purchasingpower/autoflow/client/GeminiClient.java
-     */
     private String sourceFilePath;
-
-    /**
-     * Brief description of what this class does (for embedding)
-     * Generated from: JavaDoc comment, class name analysis, field names
-     */
     private String classSummary;
 }

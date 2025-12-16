@@ -1,0 +1,91 @@
+autoflow:
+  library-rules:
+    libraries:
+      # =================================================================
+      # 1. SPRING CORE & WEB
+      # =================================================================
+      - name: Spring Framework
+        basePackage: org.springframework
+        rules:
+          - role: spring:component
+            patterns:
+              annotations: ["@Component", "@Service", "@Repository", "@Controller", "@Configuration"]
+          - role: spring:service
+            patterns:
+              annotations: ["@Service"]
+          - role: spring:rest-controller
+            patterns:
+              annotations: ["@RestController"]
+          - role: spring:config
+            patterns:
+              annotations: ["@Configuration"]
+          - role: spring:aspect
+            patterns:
+              annotations: ["@Aspect", "@Around", "@Before", "@After"]
+
+      # =================================================================
+      # 2. DATA ACCESS
+      # =================================================================
+      - name: Spring Data JPA
+        basePackage: org.springframework.data.jpa
+        rules:
+          - role: spring-data-jpa:repository
+            patterns:
+              interfaces: ["org.springframework.data.jpa.repository.JpaRepository"]
+              annotations: ["@Repository"]
+          - role: jakarta:entity
+            patterns:
+              annotations: ["@Entity"]
+
+      # =================================================================
+      # 3. HTTP CLIENTS (Addressing Request: WebClient, RestTemplate)
+      # =================================================================
+      - name: Spring Web Clients
+        basePackage: org.springframework.web.reactive
+        rules:
+          - role: spring:webclient-use
+            patterns:
+              classes: ["WebClient"]
+          - role: spring:resttemplate-use
+            patterns:
+              classes: ["RestTemplate"]
+
+      - name: Spring Cloud OpenFeign
+        basePackage: org.springframework.cloud.openfeign
+        rules:
+          - role: spring-cloud:feign-client
+            patterns:
+              annotations: ["@FeignClient"]
+
+      # =================================================================
+      # 4. MESSAGING (Addressing Request: Kafka, RabbitMQ, Solace)
+      # =================================================================
+      - name: Spring Kafka
+        basePackage: org.springframework.kafka
+        rules:
+          - role: spring-kafka:consumer
+            patterns:
+              annotations: ["@KafkaListener"]
+          - role: spring-kafka:producer
+            patterns:
+              classes: ["KafkaTemplate"]
+
+      - name: Spring RabbitMQ
+        basePackage: org.springframework.amqp.rabbit
+        rules:
+          - role: spring-rabbitmq:listener
+            patterns:
+              annotations: ["@RabbitListener"]
+          - role: spring-rabbitmq:sender
+            patterns:
+              classes: ["RabbitTemplate"]
+
+      - name: Solace PubSub+
+        basePackage: com.solace
+        rules:
+          - role: solace:listener
+            patterns:
+              annotations: ["@SolaceMessageListener"]
+          - role: solace:publisher
+            patterns:
+              classes: ["SolaceJmsTemplate", "SolaceMessagingService"]

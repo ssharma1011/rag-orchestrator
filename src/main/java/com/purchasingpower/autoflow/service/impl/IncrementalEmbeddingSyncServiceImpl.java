@@ -5,10 +5,13 @@ import com.google.protobuf.Value;
 import com.purchasingpower.autoflow.client.GeminiClient;
 import com.purchasingpower.autoflow.configuration.AppProperties;
 import com.purchasingpower.autoflow.model.ast.CodeChunk;
+import com.purchasingpower.autoflow.model.sync.ChangedFile;
+import com.purchasingpower.autoflow.model.sync.ChangedFile.ChangeType;
+import com.purchasingpower.autoflow.model.sync.EmbeddingSyncResult;
+import com.purchasingpower.autoflow.model.sync.SyncType;
 import com.purchasingpower.autoflow.service.AstParserService;
 import com.purchasingpower.autoflow.service.IncrementalEmbeddingSyncService;
 import io.pinecone.clients.Pinecone;
-import io.pinecone.unsigned_indices_model.QueryResponseWithUnsignedIndices;
 import io.pinecone.unsigned_indices_model.VectorWithUnsignedIndices;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.jgit.api.Git;
@@ -35,19 +38,19 @@ import java.util.stream.Stream;
  * ════════════════════════════════════════════════════════════════════════════
  *
  * 1. COMMIT TRACKING IN PINECONE:
- *    - Stored as a special vector with ID: "__metadata__:{repoName}:index_state"
- *    - Contains: last_indexed_commit, timestamp, stats
- *    - Survives server restarts, works across workspaces
+ * - Stored as a special vector with ID: "__metadata__:{repoName}:index_state"
+ * - Contains: last_indexed_commit, timestamp, stats
+ * - Survives server restarts, works across workspaces
  *
  * 2. FILE-LEVEL GRANULARITY:
- *    - When file changes, ALL chunks for that file are deleted and re-created
- *    - Uses file_path metadata field for filtering
- *    - One file = 1 CLASS + N METHODs + M FIELDs chunks
+ * - When file changes, ALL chunks for that file are deleted and re-created
+ * - Uses file_path metadata field for filtering
+ * - One file = 1 CLASS + N METHODs + M FIELDs chunks
  *
  * 3. GIT DIFF FOR CHANGE DETECTION:
- *    - Uses JGit to compare trees between commits
- *    - Handles: ADD, MODIFY, DELETE, RENAME
- *    - Only processes .java files in src/main/java
+ * - Uses JGit to compare trees between commits
+ * - Handles: ADD, MODIFY, DELETE, RENAME
+ * - Only processes .java files in src/main/java
  *
  * ════════════════════════════════════════════════════════════════════════════
  */
@@ -93,17 +96,22 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
             if (lastIndexedCommit == null) {
                 log.info("No previous index found. Performing INITIAL FULL INDEX.");
                 return performFullIndex(workspaceDir, repoName, currentCommit,
-                        EmbeddingSyncResult.SyncType.INITIAL_FULL_INDEX);
+                        SyncType.INITIAL_FULL_INDEX);
             }
 
             if (lastIndexedCommit.equals(currentCommit)) {
                 log.info("Already indexed at commit {}. No changes.", currentCommit.substring(0, 8));
-                return new EmbeddingSyncResult(
-                        EmbeddingSyncResult.SyncType.NO_CHANGES,
-                        0, 0, 0, 0, 0,
-                        System.currentTimeMillis() - startTime,
-                        lastIndexedCommit, currentCommit
-                );
+                return EmbeddingSyncResult.builder()
+                        .syncType(SyncType.NO_CHANGES)
+                        .filesAnalyzed(0)
+                        .filesChanged(0)
+                        .chunksDeleted(0)
+                        .chunksCreated(0)
+                        .embeddingTimeMs(0)
+                        .totalTimeMs(System.currentTimeMillis() - startTime)
+                        .fromCommit(lastIndexedCommit)
+                        .toCommit(currentCommit)
+                        .build();
             }
 
             // 4. Get changed files
@@ -116,12 +124,17 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
                 log.info("No Java source files changed.");
                 // Still update the commit reference
                 updateIndexState(repoName, currentCommit, 0);
-                return new EmbeddingSyncResult(
-                        EmbeddingSyncResult.SyncType.NO_CHANGES,
-                        0, 0, 0, 0, 0,
-                        System.currentTimeMillis() - startTime,
-                        lastIndexedCommit, currentCommit
-                );
+                return EmbeddingSyncResult.builder()
+                        .syncType(SyncType.NO_CHANGES)
+                        .filesAnalyzed(0)
+                        .filesChanged(0)
+                        .chunksDeleted(0)
+                        .chunksCreated(0)
+                        .embeddingTimeMs(0)
+                        .totalTimeMs(System.currentTimeMillis() - startTime)
+                        .fromCommit(lastIndexedCommit)
+                        .toCommit(currentCommit)
+                        .build();
             }
 
             log.info("Found {} changed Java files:", changedFiles.size());
@@ -135,12 +148,17 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
 
         } catch (Exception e) {
             log.error("Embedding sync failed", e);
-            return new EmbeddingSyncResult(
-                    EmbeddingSyncResult.SyncType.ERROR,
-                    0, 0, 0, 0, 0,
-                    System.currentTimeMillis() - startTime,
-                    null, null
-            );
+            return EmbeddingSyncResult.builder()
+                    .syncType(SyncType.ERROR)
+                    .filesAnalyzed(0)
+                    .filesChanged(0)
+                    .chunksDeleted(0)
+                    .chunksCreated(0)
+                    .embeddingTimeMs(0)
+                    .totalTimeMs(System.currentTimeMillis() - startTime)
+                    .fromCommit(null)
+                    .toCommit(null)
+                    .build();
         }
     }
 
@@ -149,7 +167,7 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
         log.warn("FORCED FULL REINDEX requested for {}", repoName);
         String currentCommit = getCurrentCommit(workspaceDir);
         return performFullIndex(workspaceDir, repoName, currentCommit,
-                EmbeddingSyncResult.SyncType.FORCED_FULL_REINDEX);
+                SyncType.FORCED_FULL_REINDEX);
     }
 
     @Override
@@ -157,7 +175,7 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
         try {
             String metadataId = METADATA_VECTOR_PREFIX + repoName + INDEX_STATE_SUFFIX;
 
-            // Query by ID
+            // Query by ID using fetch
             var response = pineconeClient.getIndexConnection(indexName)
                     .fetch(List.of(metadataId), "");
 
@@ -166,7 +184,7 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
             }
 
             var vector = response.getVectorsMap().get(metadataId);
-            if (vector == null || vector.getMetadata() == null) {
+            if (vector == null) {
                 return null;
             }
 
@@ -189,7 +207,7 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
 
     private EmbeddingSyncResult performFullIndex(
             File workspaceDir, String repoName, String currentCommit,
-            EmbeddingSyncResult.SyncType syncType) {
+            SyncType syncType) {
 
         long startTime = System.currentTimeMillis();
 
@@ -203,11 +221,17 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
 
         if (allFiles.isEmpty()) {
             updateIndexState(repoName, currentCommit, 0);
-            return new EmbeddingSyncResult(
-                    syncType, 0, 0, 0, 0, 0,
-                    System.currentTimeMillis() - startTime,
-                    null, currentCommit
-            );
+            return EmbeddingSyncResult.builder()
+                    .syncType(syncType)
+                    .filesAnalyzed(0)
+                    .filesChanged(0)
+                    .chunksDeleted(0)
+                    .chunksCreated(0)
+                    .embeddingTimeMs(0)
+                    .totalTimeMs(System.currentTimeMillis() - startTime)
+                    .fromCommit(null)
+                    .toCommit(currentCommit)
+                    .build();
         }
 
         // 3. Parse all files
@@ -225,17 +249,17 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
         long totalTime = System.currentTimeMillis() - startTime;
         log.info("Full index complete: {} chunks in {}ms", created, totalTime);
 
-        return new EmbeddingSyncResult(
-                syncType,
-                allFiles.size(),
-                allFiles.size(),
-                0,  // Nothing deleted (or unknown for first run)
-                created,
-                embedTime,
-                totalTime,
-                null,
-                currentCommit
-        );
+        return EmbeddingSyncResult.builder()
+                .syncType(syncType)
+                .filesAnalyzed(allFiles.size())
+                .filesChanged(allFiles.size())
+                .chunksDeleted(0) // Nothing deleted (or unknown for first run)
+                .chunksCreated(created)
+                .embeddingTimeMs(embedTime)
+                .totalTimeMs(totalTime)
+                .fromCommit(null)
+                .toCommit(currentCommit)
+                .build();
     }
 
     private EmbeddingSyncResult performIncrementalSync(
@@ -293,17 +317,17 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
         log.info("  Total time: {}ms", totalTime);
         log.info("═══════════════════════════════════════════════════════════════");
 
-        return new EmbeddingSyncResult(
-                EmbeddingSyncResult.SyncType.INCREMENTAL,
-                changedFiles.size(),
-                changedFiles.size(),
-                totalDeleted,
-                created,
-                embedTime,
-                totalTime,
-                fromCommit,
-                toCommit
-        );
+        return EmbeddingSyncResult.builder()
+                .syncType(SyncType.INCREMENTAL)
+                .filesAnalyzed(changedFiles.size())
+                .filesChanged(changedFiles.size())
+                .chunksDeleted(totalDeleted)
+                .chunksCreated(created)
+                .embeddingTimeMs(embedTime)
+                .totalTimeMs(totalTime)
+                .fromCommit(fromCommit)
+                .toCommit(toCommit)
+                .build();
     }
 
     /**
@@ -600,14 +624,4 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
             return new ArrayList<>();
         }
     }
-
-    // ════════════════════════════════════════════════════════════════════════════
-    // INNER TYPES
-    // ════════════════════════════════════════════════════════════════════════════
-
-    private enum ChangeType {
-        ADD, MODIFY, DELETE
-    }
-
-    private record ChangedFile(String path, ChangeType changeType) {}
 }

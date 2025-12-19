@@ -315,4 +315,51 @@ public class GeminiClient {
 
         return callChatApi(prompt);
     }
+
+
+    /**
+     * Generate plain text response (non-JSON).
+     * Used for conversational responses, questions, explanations.
+     */
+    public String generateText(String prompt) {
+        String model = props.getGemini().getChatModel();
+        String url = "/v1beta/models/" + model + ":generateContent?key=" + props.getGemini().getApiKey();
+
+        Map<String, Object> body = Map.of(
+                "contents", List.of(
+                        Map.of("parts", List.of(Map.of("text", prompt)))
+                ),
+                "generationConfig", Map.of(
+                        "temperature", 0.7,
+                        "maxOutputTokens", 2048
+                        // NO responseMimeType - returns plain text
+                )
+        );
+
+        try {
+            String json = geminiWebClient.post()
+                    .uri(url)
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(10))
+                            .filter(this::isRetryable))
+                    .block();
+
+            JsonNode root = objectMapper.readTree(json);
+
+            // Extract text from response
+            return root.path("candidates")
+                    .get(0)
+                    .path("content")
+                    .path("parts")
+                    .get(0)
+                    .path("text")
+                    .asText();
+
+        } catch (Exception e) {
+            log.error("Gemini text generation failed", e);
+            return "Error: Could not generate response - " + e.getMessage();
+        }
+    }
 }

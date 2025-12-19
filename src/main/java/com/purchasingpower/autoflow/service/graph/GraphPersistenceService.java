@@ -1,4 +1,4 @@
-package com.purchasingpower.autoflow.service;
+package com.purchasingpower.autoflow.service.graph;
 
 import com.purchasingpower.autoflow.model.ast.CodeChunk;
 import java.util.List;

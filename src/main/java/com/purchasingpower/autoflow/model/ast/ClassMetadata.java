@@ -23,6 +23,10 @@ public class ClassMetadata {
     private String fullyQualifiedName;
     private String packageName;
     private String className;
+    private String domain;
+    private String businessCapability;
+    private List<String> features;
+    private List<String> concepts;
 
     @Builder.Default
     private List<String> annotations = new ArrayList<>();

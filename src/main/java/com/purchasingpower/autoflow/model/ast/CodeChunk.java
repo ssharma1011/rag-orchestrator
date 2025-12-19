@@ -1,6 +1,5 @@
 package com.purchasingpower.autoflow.model.ast;
 
-import com.purchasingpower.autoflow.enums.ChunkType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;

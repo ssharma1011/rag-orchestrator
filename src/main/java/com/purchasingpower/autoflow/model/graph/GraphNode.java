@@ -1,6 +1,6 @@
 package com.purchasingpower.autoflow.model.graph;
 
-import com.purchasingpower.autoflow.enums.ChunkType;
+import com.purchasingpower.autoflow.model.ast.ChunkType;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;

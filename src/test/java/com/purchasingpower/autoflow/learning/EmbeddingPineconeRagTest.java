@@ -2,7 +2,7 @@ package com.purchasingpower.autoflow.learning;
 
 import com.purchasingpower.autoflow.client.GeminiClient;
 import com.purchasingpower.autoflow.client.PineconeRetriever;
-import com.purchasingpower.autoflow.enums.ChunkType;
+import com.purchasingpower.autoflow.model.ast.ChunkType;
 import com.purchasingpower.autoflow.model.ast.CodeChunk;
 import com.purchasingpower.autoflow.service.AstParserService;
 import com.purchasingpower.autoflow.service.impl.PineconeIngestServiceImpl;

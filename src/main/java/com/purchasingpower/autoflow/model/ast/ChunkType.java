@@ -1,4 +1,4 @@
-package com.purchasingpower.autoflow.enums;
+package com.purchasingpower.autoflow.model.ast;
 
 /**
  * Represents the type of code chunk for AST-based indexing.

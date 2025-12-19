@@ -1,6 +1,6 @@
 package com.purchasingpower.autoflow.service.impl;
 
-import com.purchasingpower.autoflow.enums.ChunkType;
+import com.purchasingpower.autoflow.model.ast.ChunkType;
 import com.purchasingpower.autoflow.model.ast.*;
 import com.purchasingpower.autoflow.service.AstParserService;
 import com.purchasingpower.autoflow.service.library.LibraryDetectionService;
@@ -21,8 +21,7 @@ import java.util.stream.Collectors;
 @Service
 public class AstParserServiceImpl implements AstParserService {
 
-    // Removed the old hardcoded map
-    private final LibraryDetectionService libraryDetectionService; // <--- Corrected Dependency
+    private final LibraryDetectionService libraryDetectionService;
 
     public AstParserServiceImpl(LibraryDetectionService libraryDetectionService) {
         this.libraryDetectionService = libraryDetectionService;
@@ -121,12 +120,21 @@ public class AstParserServiceImpl implements AstParserService {
         }
 
         List<String> imports = extractImports(type);
+        
+        // ✅ FIX: Extract method calls from the class
+        List<String> methodCalls = extractMethodCallsFromClass(type);
 
-        // 1. Detect Libraries (General Names) - uses the injected service
+        // 1. Detect Libraries (General Names)
         List<String> libraries = libraryDetectionService.detectLibraries(imports);
 
-        // 2. Detect Roles (Specific Tags) - uses the injected service
-        List<String> roles = libraryDetectionService.detectRoles(imports, annotations, interfaces);
+        // 2. Detect Roles (Specific Tags) - ✅ FIXED: Now passes all 5 parameters
+        List<String> roles = libraryDetectionService.detectRoles(
+            imports,
+            annotations,
+            interfaces,
+            superClass,      // ✅ NOW INCLUDED
+            methodCalls      // ✅ NOW INCLUDED
+        );
 
         Set<DependencyEdge> dependencies = extractRichDependencies(type, imports, packageName);
         String classSummary = buildClassSummaryForMetadata(type, annotations, dependencies);
@@ -140,7 +148,7 @@ public class AstParserServiceImpl implements AstParserService {
                 .superClass(superClass)
                 .importedClasses(imports)
                 .usedLibraries(libraries)
-                .roles(roles) // <--- POPULATE NEW FIELD
+                .roles(roles)
                 .dependencies(dependencies)
                 .isAbstract(type.isAbstract())
                 .isInterface(type.isInterface())
@@ -150,6 +158,32 @@ public class AstParserServiceImpl implements AstParserService {
                 .sourceFilePath(getRelativePath(sourceFile))
                 .classSummary(classSummary)
                 .build();
+    }
+
+    /**
+     * ✅ NEW METHOD: Extracts method calls from entire class (all methods)
+     */
+    private List<String> extractMethodCallsFromClass(CtType<?> type) {
+        try {
+            return type.getElements(new TypeFilter<>(CtInvocation.class)).stream()
+                .map(inv -> {
+                    String call = inv.getExecutable().getSimpleName();
+                    if (inv.getTarget() != null) {
+                        // Include receiver type for better pattern matching
+                        // e.g., "kafkaTemplate.send", "webClient.post"
+                        String target = inv.getTarget().toString();
+                        if (target.length() < 50) { // Avoid massive expressions
+                            call = target + "." + call;
+                        }
+                    }
+                    return call;
+                })
+                .distinct()
+                .collect(Collectors.toList());
+        } catch (Exception e) {
+            log.debug("Failed to extract method calls from {}: {}", type.getSimpleName(), e.getMessage());
+            return Collections.emptyList();
+        }
     }
 
     private Set<DependencyEdge> extractRichDependencies(CtType<?> type, List<String> imports, String currentPackage) {
@@ -178,8 +212,6 @@ public class AstParserServiceImpl implements AstParserService {
         for (CtTypeReference<?> iface : type.getSuperInterfaces()) {
             addEdge(edges, iface, imports, currentPackage, DependencyEdge.RelationshipType.IMPLEMENTS, null);
         }
-        // NOISE FILTER REMOVED: Storing everything in Graph DB.
-        // We only filter self-references.
         edges.removeIf(edge -> edge.getTargetClass().equals(type.getQualifiedName()));
         return edges;
     }
@@ -242,7 +274,6 @@ public class AstParserServiceImpl implements AstParserService {
         StringBuilder summary = new StringBuilder();
         summary.append("Class: ").append(metadata.getFullyQualifiedName()).append("\n");
         if (!metadata.getAnnotations().isEmpty()) summary.append("Annotations: ").append(String.join(", ", metadata.getAnnotations())).append("\n");
-        // NEW: Include roles in summary for embedding
         if (!metadata.getRoles().isEmpty()) summary.append("Roles: ").append(String.join(", ", metadata.getRoles())).append("\n");
         if (metadata.getClassSummary() != null) summary.append("\n").append(metadata.getClassSummary());
         return summary.toString();

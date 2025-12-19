@@ -1,6 +1,6 @@
 package com.purchasingpower.autoflow.service.impl;
 
-import com.purchasingpower.autoflow.enums.ChunkType;
+import com.purchasingpower.autoflow.model.ast.ChunkType;
 import com.purchasingpower.autoflow.model.ast.CodeChunk;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

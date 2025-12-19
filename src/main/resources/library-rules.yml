@@ -1,91 +1,321 @@
 autoflow:
-  library-rules:
+  library-detection:
     libraries:
-      # =================================================================
-      # 1. SPRING CORE & WEB
-      # =================================================================
+      
+      # ================================================================
+      # JAVA - SPRING FRAMEWORK
+      # ================================================================
       - name: Spring Framework
         basePackage: org.springframework
+        fileExtensions: [.java]
+        projectType: JAVA_SPRING
         rules:
-          - role: spring:component
-            patterns:
-              annotations: ["@Component", "@Service", "@Repository", "@Controller", "@Configuration"]
           - role: spring:service
             patterns:
               annotations: ["@Service"]
+              mode: ALL
+          
           - role: spring:rest-controller
             patterns:
               annotations: ["@RestController"]
-          - role: spring:config
+              mode: ALL
+          
+          - role: spring:controller
+            patterns:
+              annotations: ["@Controller"]
+              mode: ALL
+          
+          - role: spring:repository
+            patterns:
+              annotations: ["@Repository"]
+              mode: ALL
+          
+          - role: spring:configuration
             patterns:
               annotations: ["@Configuration"]
+              mode: ALL
+          
+          - role: spring:component
+            patterns:
+              annotations: ["@Component"]
+              mode: ALL
+          
           - role: spring:aspect
             patterns:
-              annotations: ["@Aspect", "@Around", "@Before", "@After"]
-
-      # =================================================================
-      # 2. DATA ACCESS
-      # =================================================================
+              annotations: ["@Aspect"]
+              importPrefixes: ["org.aspectj"]
+              mode: ALL
+          
+          - role: spring:scheduled-task
+            patterns:
+              annotations: ["@Scheduled"]
+              mode: ALL
+          
+          - role: spring:async-method
+            patterns:
+              annotations: ["@Async"]
+              mode: ALL
+      
+      # ================================================================
+      # JAVA - SPRING DATA JPA
+      # ================================================================
       - name: Spring Data JPA
         basePackage: org.springframework.data.jpa
+        fileExtensions: [.java]
+        projectType: JAVA_SPRING
         rules:
           - role: spring-data-jpa:repository
             patterns:
-              interfaces: ["org.springframework.data.jpa.repository.JpaRepository"]
-              annotations: ["@Repository"]
-          - role: jakarta:entity
+              interfaces: 
+                - org.springframework.data.jpa.repository.JpaRepository
+                - org.springframework.data.repository.CrudRepository
+                - org.springframework.data.repository.PagingAndSortingRepository
+              mode: ANY
+          
+          - role: jpa:entity
             patterns:
               annotations: ["@Entity"]
-
-      # =================================================================
-      # 3. HTTP CLIENTS (Addressing Request: WebClient, RestTemplate)
-      # =================================================================
-      - name: Spring Web Clients
-        basePackage: org.springframework.web.reactive
-        rules:
-          - role: spring:webclient-use
+              importPrefixes: ["jakarta.persistence", "javax.persistence"]
+              mode: ALL
+          
+          - role: jpa:embeddable
             patterns:
-              classes: ["WebClient"]
-          - role: spring:resttemplate-use
+              annotations: ["@Embeddable"]
+              mode: ALL
+          
+          - role: jpa:converter
             patterns:
-              classes: ["RestTemplate"]
-
-      - name: Spring Cloud OpenFeign
-        basePackage: org.springframework.cloud.openfeign
-        rules:
-          - role: spring-cloud:feign-client
-            patterns:
-              annotations: ["@FeignClient"]
-
-      # =================================================================
-      # 4. MESSAGING (Addressing Request: Kafka, RabbitMQ, Solace)
-      # =================================================================
+              annotations: ["@Converter"]
+              interfaces: ["jakarta.persistence.AttributeConverter"]
+              mode: ALL
+      
+      # ================================================================
+      # JAVA - SPRING KAFKA
+      # ================================================================
       - name: Spring Kafka
         basePackage: org.springframework.kafka
+        fileExtensions: [.java]
+        projectType: JAVA_SPRING
         rules:
           - role: spring-kafka:consumer
             patterns:
               annotations: ["@KafkaListener"]
+              mode: ALL
+          
           - role: spring-kafka:producer
             patterns:
               classes: ["KafkaTemplate"]
-
+              methodCalls: ["kafkaTemplate.send"]
+              mode: ANY
+          
+          - role: spring-kafka:stream-processor
+            patterns:
+              annotations: ["@EnableKafkaStreams"]
+              importPrefixes: ["org.apache.kafka.streams"]
+              mode: ANY
+      
+      # ================================================================
+      # JAVA - SPRING CLOUD
+      # ================================================================
+      - name: Spring Cloud
+        basePackage: org.springframework.cloud
+        fileExtensions: [.java]
+        projectType: JAVA_SPRING
+        rules:
+          - role: spring-cloud:feign-client
+            patterns:
+              annotations: ["@FeignClient"]
+              mode: ALL
+          
+          - role: spring-cloud:circuit-breaker
+            patterns:
+              annotations: ["@CircuitBreaker", "@HystrixCommand"]
+              mode: ANY
+          
+          - role: spring-cloud:config-client
+            patterns:
+              annotations: ["@RefreshScope"]
+              importPrefixes: ["org.springframework.cloud.config"]
+              mode: ANY
+      
+      # ================================================================
+      # JAVA - SPRING WEBFLUX (Reactive)
+      # ================================================================
+      - name: Spring WebFlux
+        basePackage: org.springframework.web.reactive
+        fileExtensions: [.java]
+        projectType: JAVA_SPRING
+        rules:
+          - role: spring-webflux:handler
+            patterns:
+              classes: ["ServerRequest", "ServerResponse", "RouterFunction"]
+              mode: ANY
+          
+          - role: spring-webflux:webclient-user
+            patterns:
+              classes: ["WebClient"]
+              methodCalls: ["webClient.get", "webClient.post"]
+              mode: ANY
+      
+      # ================================================================
+      # JAVA - MESSAGING (RabbitMQ, ActiveMQ)
+      # ================================================================
       - name: Spring RabbitMQ
         basePackage: org.springframework.amqp.rabbit
+        fileExtensions: [.java]
+        projectType: JAVA_SPRING
         rules:
           - role: spring-rabbitmq:listener
             patterns:
               annotations: ["@RabbitListener"]
+              mode: ALL
+          
           - role: spring-rabbitmq:sender
             patterns:
               classes: ["RabbitTemplate"]
-
+              mode: ALL
+      
       - name: Solace PubSub+
         basePackage: com.solace
+        fileExtensions: [.java]
+        projectType: JAVA_SPRING
         rules:
           - role: solace:listener
             patterns:
               annotations: ["@SolaceMessageListener"]
+              importPrefixes: ["com.solace"]
+              mode: ALL
+          
           - role: solace:publisher
             patterns:
               classes: ["SolaceJmsTemplate", "SolaceMessagingService"]
+              mode: ANY
+      
+      # ================================================================
+      # JAVA - TESTING
+      # ================================================================
+      - name: JUnit
+        basePackage: org.junit
+        fileExtensions: [.java]
+        projectType: JAVA_GENERIC
+        rules:
+          - role: junit:test-class
+            patterns:
+              annotations: ["@Test"]
+              importPrefixes: ["org.junit"]
+              mode: ALL
+      
+      - name: Mockito
+        basePackage: org.mockito
+        fileExtensions: [.java]
+        projectType: JAVA_GENERIC
+        rules:
+          - role: mockito:test-with-mocks
+            patterns:
+              annotations: ["@Mock", "@InjectMocks"]
+              mode: ANY
+      
+      # ================================================================
+      # ANGULAR - FRONTEND
+      # ================================================================
+      - name: Angular
+        basePackage: "@angular"
+        fileExtensions: [.ts]
+        projectType: ANGULAR
+        rules:
+          - role: angular:component
+            patterns:
+              annotations: ["@Component"]
+              imports: ["@angular/core"]
+              mode: ALL
+          
+          - role: angular:service
+            patterns:
+              annotations: ["@Injectable"]
+              imports: ["@angular/core"]
+              mode: ALL
+          
+          - role: angular:directive
+            patterns:
+              annotations: ["@Directive"]
+              mode: ALL
+          
+          - role: angular:pipe
+            patterns:
+              annotations: ["@Pipe"]
+              mode: ALL
+          
+          - role: angular:module
+            patterns:
+              annotations: ["@NgModule"]
+              mode: ALL
+          
+          - role: angular:guard
+            patterns:
+              interfaces: ["CanActivate", "CanDeactivate", "CanLoad"]
+              imports: ["@angular/router"]
+              mode: ANY
+      
+      - name: RxJS
+        basePackage: "rxjs"
+        fileExtensions: [.ts, .js]
+        projectType: ANGULAR
+        rules:
+          - role: rxjs:observable-user
+            patterns:
+              imports: ["rxjs"]
+              classes: ["Observable", "Subject", "BehaviorSubject"]
+              mode: ANY
+      
+      # ================================================================
+      # HYBRIS - E-COMMERCE PLATFORM
+      # ================================================================
+      - name: SAP Hybris
+        basePackage: de.hybris
+        fileExtensions: [.java]
+        projectType: HYBRIS
+        rules:
+          - role: hybris:controller
+            patterns:
+              annotations: ["@Controller"]
+              importPrefixes: ["de.hybris.platform.acceleratorstorefrontcommons"]
+              mode: ALL
+          
+          - role: hybris:facade
+            patterns:
+              interfaces: ["de.hybris.platform.commercefacades"]
+              mode: ANY
+          
+          - role: hybris:service
+            patterns:
+              importPrefixes: ["de.hybris.platform.servicelayer.service"]
+              mode: ANY
+          
+          - role: hybris:dao
+            patterns:
+              classes: ["FlexibleSearchQuery"]
+              importPrefixes: ["de.hybris.platform.servicelayer.search"]
+              mode: ANY
+          
+          - role: hybris:converter
+            patterns:
+              interfaces: ["de.hybris.platform.servicelayer.dto.converter.Converter"]
+              mode: ALL
+          
+          - role: hybris:populator
+            patterns:
+              interfaces: ["de.hybris.platform.converters.Populator"]
+              mode: ALL
+          
+          - role: hybris:interceptor
+            patterns:
+              interfaces:
+                - de.hybris.platform.servicelayer.interceptor.PrepareInterceptor
+                - de.hybris.platform.servicelayer.interceptor.ValidateInterceptor
+              mode: ANY
+          
+          - role: hybris:cronjob
+            patterns:
+              interfaces: ["de.hybris.platform.cronjob.jalo.CronJob"]
+              annotations: ["@Override"]
+              mode: ALL

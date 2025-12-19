@@ -1,5 +1,6 @@
 package com.purchasingpower.autoflow.service.graph.impl;
 
+import com.purchasingpower.autoflow.model.ast.ClassMetadata;
 import com.purchasingpower.autoflow.model.ast.CodeChunk;
 import com.purchasingpower.autoflow.model.ast.DependencyEdge;
 import com.purchasingpower.autoflow.model.graph.GraphEdge;
@@ -73,21 +74,34 @@ public class GraphPersistenceServiceImpl implements GraphPersistenceService {
      */
     private List<GraphNode> convertToNodes(List<CodeChunk> chunks, String repoName) {
         return chunks.stream()
-                .map(chunk -> GraphNode.builder()
-                        .nodeId(chunk.getId())
-                        .type(chunk.getType())
-                        .repoName(repoName)
-                        .fullyQualifiedName(extractFQN(chunk))
-                        .simpleName(extractSimpleName(chunk))
-                        .packageName(extractPackageName(chunk))
-                        .filePath(extractFilePath(chunk))
-                        .parentNodeId(chunk.getParentChunkId())
-                        .summary(buildNodeSummary(chunk))
-                        .lineCount(extractLineCount(chunk))
-                        .build())
+                .map(chunk -> {
+                    GraphNode.GraphNodeBuilder builder = GraphNode.builder()
+                            .nodeId(chunk.getId())
+                            .type(chunk.getType())
+                            .repoName(repoName)
+                            .fullyQualifiedName(extractFQN(chunk))
+                            .simpleName(extractSimpleName(chunk))
+                            .packageName(extractPackageName(chunk))
+                            .filePath(extractFilePath(chunk))
+                            .parentNodeId(chunk.getParentChunkId())
+                            .summary(buildNodeSummary(chunk))
+                            .lineCount(extractLineCount(chunk));
+
+                    // Add knowledge graph fields from ClassMetadata
+                    if (chunk.getClassMetadata() != null) {
+                        ClassMetadata meta = chunk.getClassMetadata();
+                        builder.domain(meta.getDomain())
+                                .businessCapability(meta.getBusinessCapability())
+                                .features(meta.getFeatures() != null ?
+                                        String.join(",", meta.getFeatures()) : null)
+                                .concepts(meta.getConcepts() != null ?
+                                        String.join(",", meta.getConcepts()) : null);
+                    }
+
+                    return builder.build();
+                })
                 .collect(Collectors.toList());
     }
-
     /**
      * Extracts dependency edges from CodeChunks.
      * Each DependencyEdge becomes a GraphEdge.

@@ -2,6 +2,7 @@ package com.purchasingpower.autoflow.service.impl;
 
 import com.purchasingpower.autoflow.exception.BuildFailureException;
 import com.purchasingpower.autoflow.service.MavenBuildService;
+import com.purchasingpower.autoflow.workflow.state.BuildResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -17,7 +18,7 @@ import java.util.List;
 public class MavenBuildServiceImpl implements MavenBuildService {
 
     @Override
-    public void buildAndVerify(File projectDir) {
+    public BuildResult buildAndVerify(File projectDir) {
         log.info("Starting Maven Build & Verification in: {}", projectDir.getAbsolutePath());
         StringBuilder captureLogs = new StringBuilder(); // Store logs here
 
@@ -50,6 +51,7 @@ public class MavenBuildServiceImpl implements MavenBuildService {
         catch (Exception e) {
             throw new RuntimeException("Build validation failed: " + e.getMessage(), e);
         }
+        return null;
     }
 
     private static Process getProcess(File projectDir, boolean isWindows) throws IOException {

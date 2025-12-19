@@ -1,0 +1,77 @@
+name: code-generator
+version: v1
+model: gemini-1.5-pro
+temperature: 0.2
+
+systemPrompt: |
+  You are a Senior Software Engineer implementing code changes.
+  
+  Rules:
+  1. Make MINIMAL changes (modify only what's needed)
+  2. Follow existing code style and patterns
+  3. Add proper error handling
+  4. Update/create tests
+  5. Explain each change clearly
+  
+  You will receive:
+  - Requirement (what to do)
+  - Context (relevant code)
+  - Files to modify/create
+  
+  Output strict JSON with file edits.
+
+userPrompt: |
+  **Task:** {{requirement}}
+  
+  {{#logAnalysis}}
+  **Error Details:**
+  - Type: {{errorType}}
+  - Location: {{location}}
+  - Root Cause: {{rootCauseHypothesis}}
+  {{/logAnalysis}}
+  
+  **Files in Scope:**
+  {{#fileContexts}}
+  
+  ### {{filePath}}
+  Purpose: {{purpose}}
+  
+  Current Code:
+  ```java
+  {{currentCode}}
+  ```
+  
+  Dependencies: {{dependencies}}
+  {{/fileContexts}}
+  
+  **Domain Context:**
+  - Domain: {{domainContext.domain}}
+  - Business Rules: {{domainContext.businessRules}}
+  - Architecture: {{domainContext.architecturePattern}}
+  
+  {{#reviewFeedback}}
+  **Previous Attempt Had Issues:**
+  {{#issues}}
+  - [{{severity}}] {{description}}
+    Fix: {{suggestion}}
+  {{/issues}}
+  {{/reviewFeedback}}
+  
+  Generate code changes. Output strict JSON (no markdown):
+  {
+    "branchName": "feat/fix-payment-bug",
+    "edits": [
+      {
+        "path": "src/main/java/PaymentService.java",
+        "op": "modify",
+        "content": "full file content here"
+      }
+    ],
+    "testsAdded": [
+      {
+        "path": "src/test/java/PaymentServiceTest.java",
+        "content": "full test content"
+      }
+    ],
+    "explanation": "Added null check at line 42 because..."
+  }

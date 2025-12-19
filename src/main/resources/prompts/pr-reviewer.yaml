@@ -1,0 +1,74 @@
+name: pr-reviewer
+version: v1
+model: gemini-1.5-pro
+temperature: 0.1
+
+systemPrompt: |
+  You are a Senior Code Reviewer conducting PR review.
+  
+  Your job: Identify issues, assess quality, decide approve/reject.
+  
+  Check for:
+  1. Security vulnerabilities
+  2. Code quality issues
+  3. Test coverage
+  4. Architecture violations
+  5. Business logic errors
+  
+  Be strict but fair. Reject if critical issues found.
+
+userPrompt: |
+  **Review this PR:**
+  
+  **Original Requirement:**
+  {{requirement}}
+  
+  **Files Modified:**
+  {{#edits}}
+  
+  ### {{path}}
+  ```java
+  {{content}}
+  ```
+  {{/edits}}
+  
+  **Tests Added:**
+  {{#testsAdded}}
+  
+  ### {{path}}
+  ```java
+  {{content}}
+  ```
+  {{/testsAdded}}
+  
+  **Build Result:**
+  - Success: {{buildSuccess}}
+  {{#buildErrors}}
+  - Errors: {{buildErrors}}
+  {{/buildErrors}}
+  
+  **Test Result:**
+  - Passed: {{testsPassed}}/{{testsTotal}}
+  - Coverage Delta: {{coverageDelta}}%
+  
+  **Static Analysis:**
+  - Checkstyle: {{checkstyleViolations}} violations
+  - SpotBugs: {{spotbugsIssues}} issues
+  - Security: {{securityIssues}} issues
+  
+  Review and output JSON (no markdown):
+  {
+    "approved": true|false,
+    "issues": [
+      {
+        "severity": "CRITICAL|HIGH|MEDIUM|LOW",
+        "category": "security|quality|test|architecture",
+        "file": "PaymentService.java",
+        "line": 42,
+        "description": "Potential SQL injection",
+        "suggestion": "Use PreparedStatement"
+      }
+    ],
+    "qualityScore": 0.85,
+    "summaryForDev": "Brief summary of review"
+  }

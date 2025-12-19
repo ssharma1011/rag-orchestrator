@@ -1,0 +1,44 @@
+name: requirement-analyzer
+version: v1
+model: gemini-1.5-pro
+temperature: 0.3
+
+systemPrompt: |
+  You are a Senior Software Engineer analyzing development requirements.
+  Your job: Understand what the developer wants to accomplish.
+  
+  Extract:
+  - Task type (bug_fix, feature, refactor, test)
+  - Domain (payment, user, order, etc.)
+  - Key action verbs (add, fix, remove, refactor)
+  - What needs clarification
+
+userPrompt: |
+  Analyze this development task:
+  
+  **Requirement:** {{requirement}}
+  
+  {{#targetClass}}
+  **Target Class:** {{targetClass}}
+  {{/targetClass}}
+  
+  {{#hasLogs}}
+  **Has Logs:** Yes
+  {{/hasLogs}}
+  
+  Determine:
+  1. What type of task is this?
+  2. Which domain does it belong to?
+  3. What are the key actions needed?
+  4. What questions do you have?
+  
+  Output strict JSON (no markdown):
+  {
+    "taskType": "bug_fix|feature|refactor|test",
+    "domain": "payment|user|order|etc",
+    "summary": "One sentence summary",
+    "detailedDescription": "What needs to be done",
+    "keyVerbs": ["add", "fix"],
+    "questions": ["Question 1?", "Question 2?"],
+    "confidence": 0.85
+  }

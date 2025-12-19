@@ -127,19 +127,18 @@ public class AstParserServiceImpl implements AstParserService {
         // 1. Detect Libraries (General Names)
         List<String> libraries = libraryDetectionService.detectLibraries(imports);
 
-        // 2. Detect Roles (Specific Tags) - ✅ FIXED: Now passes all 5 parameters
         List<String> roles = libraryDetectionService.detectRoles(
             imports,
             annotations,
             interfaces,
-            superClass,      // ✅ NOW INCLUDED
-            methodCalls      // ✅ NOW INCLUDED
+            superClass,
+            methodCalls
         );
 
         Set<DependencyEdge> dependencies = extractRichDependencies(type, imports, packageName);
         String classSummary = buildClassSummaryForMetadata(type, annotations, dependencies);
 
-        return ClassMetadata.builder()
+        ClassMetadata classMetadata = ClassMetadata.builder()
                 .fullyQualifiedName(fqn)
                 .packageName(packageName)
                 .className(type.getSimpleName())
@@ -158,6 +157,10 @@ public class AstParserServiceImpl implements AstParserService {
                 .sourceFilePath(getRelativePath(sourceFile))
                 .classSummary(classSummary)
                 .build();
+
+        inferKnowledgeGraph(classMetadata, type);
+
+        return classMetadata;
     }
 
     /**
@@ -421,4 +424,155 @@ public class AstParserServiceImpl implements AstParserService {
         if (type.isAnnotationType()) return ChunkType.ANNOTATION;
         return ChunkType.CLASS;
     }
+
+    // Add this method to AstParserServiceImpl class
+
+    /**
+     * Infers knowledge graph metadata from class structure.
+     * Analyzes package, class name, annotations, methods to extract semantic meaning.
+     */
+    private void inferKnowledgeGraph(ClassMetadata metadata, CtType<?> type) {
+        // 1. Infer Domain from package name and class name
+        metadata.setDomain(inferDomain(metadata));
+
+        // 2. Infer Business Capability from annotations and interfaces
+        metadata.setBusinessCapability(inferBusinessCapability(metadata, type));
+
+        // 3. Infer Features from method names
+        metadata.setFeatures(inferFeatures(type));
+
+        // 4. Infer Concepts from annotations, interfaces, field types
+        metadata.setConcepts(inferConcepts(metadata, type));
+    }
+
+    private String inferDomain(ClassMetadata metadata) {
+        String packageName = metadata.getPackageName().toLowerCase();
+        String className = metadata.getClassName().toLowerCase();
+
+        // Domain keywords mapping
+        if (packageName.contains("payment") || className.contains("payment")) return "payment";
+        if (packageName.contains("user") || className.contains("user")) return "user-management";
+        if (packageName.contains("order") || className.contains("order")) return "order-management";
+        if (packageName.contains("product") || className.contains("product")) return "product-catalog";
+        if (packageName.contains("inventory") || className.contains("inventory")) return "inventory";
+        if (packageName.contains("shipping") || className.contains("shipping")) return "shipping";
+        if (packageName.contains("notification") || className.contains("notification")) return "notification";
+        if (packageName.contains("auth") || className.contains("auth")) return "authentication";
+        if (packageName.contains("report") || className.contains("report")) return "reporting";
+        if (packageName.contains("audit") || className.contains("audit")) return "audit";
+
+        // Extract from package structure (e.g., com.company.payment.processor → payment)
+        String[] parts = packageName.split("\\.");
+        if (parts.length > 2) return parts[2]; // Assume 3rd segment is domain
+
+        return "general";
+    }
+
+    private String inferBusinessCapability(ClassMetadata metadata, CtType<?> type) {
+        List<String> annotations = metadata.getAnnotations();
+        List<String> interfaces = metadata.getImplementedInterfaces();
+        String className = metadata.getClassName().toLowerCase();
+
+        // Capability from annotations
+        if (annotations.contains("@RestController") || annotations.contains("@Controller")) {
+            return "api-gateway";
+        }
+        if (annotations.contains("@Service")) {
+            if (className.contains("payment")) return "transaction-processing";
+            if (className.contains("user")) return "user-management";
+            if (className.contains("notification")) return "notification-service";
+            return "business-logic";
+        }
+        if (annotations.contains("@Repository")) return "data-access";
+        if (annotations.contains("@Configuration")) return "configuration-management";
+        if (annotations.contains("@KafkaListener")) return "event-processing";
+        if (annotations.contains("@Scheduled")) return "batch-processing";
+
+        // Capability from interfaces
+        if (interfaces.stream().anyMatch(i -> i.contains("Repository"))) return "data-access";
+        if (interfaces.stream().anyMatch(i -> i.contains("Validator"))) return "validation";
+        if (interfaces.stream().anyMatch(i -> i.contains("Converter"))) return "data-transformation";
+
+        // Capability from class name
+        if (className.contains("processor")) return "data-processing";
+        if (className.contains("handler")) return "event-handling";
+        if (className.contains("manager")) return "resource-management";
+        if (className.contains("client")) return "external-integration";
+
+        return "general-service";
+    }
+
+    private List<String> inferFeatures(CtType<?> type) {
+        List<String> features = new ArrayList<>();
+
+        // Extract from method names
+        for (CtMethod<?> method : type.getMethods()) {
+            String methodName = method.getSimpleName().toLowerCase();
+
+            if (methodName.contains("checkout")) features.add("checkout");
+            if (methodName.contains("refund")) features.add("refunds");
+            if (methodName.contains("fraud")) features.add("fraud-detection");
+            if (methodName.contains("validate")) features.add("validation");
+            if (methodName.contains("notify")) features.add("notifications");
+            if (methodName.contains("auth")) features.add("authentication");
+            if (methodName.contains("encrypt") || methodName.contains("decrypt")) features.add("encryption");
+            if (methodName.contains("search")) features.add("search");
+            if (methodName.contains("report")) features.add("reporting");
+            if (methodName.contains("export")) features.add("data-export");
+            if (methodName.contains("import")) features.add("data-import");
+        }
+
+        return features.stream().distinct().collect(Collectors.toList());
+    }
+
+    private List<String> inferConcepts(ClassMetadata metadata, CtType<?> type) {
+        List<String> concepts = new ArrayList<>();
+        List<String> annotations = metadata.getAnnotations();
+        List<String> interfaces = metadata.getImplementedInterfaces();
+
+        // Financial concepts
+        if (metadata.getDomain().equals("payment")) {
+            concepts.add("financial");
+            if (annotations.contains("@Transactional")) concepts.add("transactional");
+        }
+
+        // Security concepts
+        if (metadata.getClassName().toLowerCase().contains("secure") ||
+                annotations.stream().anyMatch(a -> a.toLowerCase().contains("secure"))) {
+            concepts.add("security");
+        }
+        if (interfaces.stream().anyMatch(i -> i.contains("Encrypted"))) {
+            concepts.add("PCI-compliant");
+        }
+
+        // Async concepts
+        if (annotations.contains("@Async") || annotations.contains("@KafkaListener")) {
+            concepts.add("asynchronous");
+        }
+
+        // Transaction concepts
+        if (annotations.contains("@Transactional")) {
+            concepts.add("transactional");
+        }
+
+        // REST concepts
+        if (annotations.contains("@RestController")) {
+            concepts.add("RESTful");
+        }
+
+        // Persistence concepts
+        if (annotations.contains("@Entity") || annotations.contains("@Repository")) {
+            concepts.add("persistent");
+        }
+
+        // Reactive concepts
+        if (metadata.getImportedClasses().stream().anyMatch(i -> i.contains("reactor") || i.contains("Mono") || i.contains("Flux"))) {
+            concepts.add("reactive");
+        }
+
+        return concepts.stream().distinct().collect(Collectors.toList());
+    }
+
+// Add this call in buildClassMetadata() method, after existing metadata extraction:
+// inferKnowledgeGraph(classMetadata, type);
 }

@@ -1,0 +1,73 @@
+name: scope-discovery
+version: v1
+model: gemini-1.5-pro
+temperature: 0.2
+
+system_prompt: |
+  You are a Senior Software Architect analyzing code structure.
+  Your job: Determine which files need modification for a given task.
+  
+  Rules:
+  - Be conservative (modify only what's needed)
+  - Consider dependencies carefully
+  - Don't break existing functionality
+  - Maximum 7 files allowed
+  - Don't hallucinate, be 100% sure
+
+user_prompt: |
+  Task: {{requirement}}
+  Domain: {{domain}}
+  
+  Candidate Classes Found:
+  {{#candidates}}
+  - {{className}} ({{filePath}})
+    Purpose: {{purpose}}
+    Dependencies: {{dependencies}}
+  {{/candidates}}
+  
+  Determine:
+  1. Which files to MODIFY (existing files that need changes)
+  2. Which files to CREATE (new files needed)
+  3. Which tests to UPDATE (test files to modify/create)
+  
+  Output strict JSON (no markdown, no backticks):
+  {
+    "filesToModify": ["path1", "path2"],
+    "filesToCreate": ["path3"],
+    "testsToUpdate": ["path4"],
+    "reasoning": "Why these specific files?",
+    "estimatedComplexity": 5,
+    "risks": ["Potential issue 1"]
+  }
+
+response_schema:
+  type: object
+  required:
+    - filesToModify
+    - filesToCreate
+    - testsToUpdate
+    - reasoning
+    - estimatedComplexity
+  properties:
+    filesToModify:
+      type: array
+      items:
+        type: string
+    filesToCreate:
+      type: array
+      items:
+        type: string
+    testsToUpdate:
+      type: array
+      items:
+        type: string
+    reasoning:
+      type: string
+    estimatedComplexity:
+      type: integer
+      minimum: 1
+      maximum: 10
+    risks:
+      type: array
+      items:
+        type: string

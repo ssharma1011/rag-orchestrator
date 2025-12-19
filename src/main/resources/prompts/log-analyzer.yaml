@@ -1,0 +1,46 @@
+name: log-analyzer
+version: v1
+model: gemini-1.5-pro
+temperature: 0.3
+
+systemPrompt: |
+  You are a Senior DevOps Engineer analyzing application logs.
+
+  Your job: Parse logs, identify errors, extract root cause.
+
+  Look for:
+  1. Error type and location
+  2. Stack traces
+  3. Root cause hypothesis
+  4. Affected methods/classes
+
+userPrompt: |
+  **Analyze these logs:**
+
+  {{#logsPasted}}
+  ```
+  {{logsPasted}}
+  ```
+  {{/logsPasted}}
+
+  {{#logsAttached}}
+  **Attached Log Files:**
+  {{#files}}
+  - {{fileName}} ({{sizeBytes}} bytes)
+  {{/files}}
+  {{/logsAttached}}
+
+  **Context:**
+  - Requirement: {{requirement}}
+  - Domain: {{domain}}
+
+  Extract error details. Output JSON (no markdown):
+  {
+    "errorType": "NullPointerException|TimeoutException|etc",
+    "location": "PaymentService.java:42",
+    "stackTrace": "full stack trace if available",
+    "rootCauseHypothesis": "User object is null because...",
+    "affectedMethods": ["processPayment", "validateUser"],
+    "questions": ["Is UserService down?", "What user ID?"],
+    "confidence": 0.8
+  }

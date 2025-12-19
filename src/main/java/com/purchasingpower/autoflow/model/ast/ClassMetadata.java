@@ -12,7 +12,7 @@ import java.util.Set;
 
 /**
  * Metadata extracted from a Java class/interface/enum during AST parsing.
- * Used to create the "parent" chunk in hierarchical vector storage.
+ * Includes knowledge graph fields for semantic domain analysis.
  */
 @Data
 @Builder
@@ -23,10 +23,44 @@ public class ClassMetadata {
     private String fullyQualifiedName;
     private String packageName;
     private String className;
+
+    // ================================================================
+    // KNOWLEDGE GRAPH FIELDS (NEW)
+    // ================================================================
+
+    /**
+     * Business domain this class belongs to.
+     * Examples: "payment", "user-management", "inventory", "shipping"
+     * Inferred from: package name, class name, imports
+     */
     private String domain;
+
+    /**
+     * Business capability this class provides.
+     * Examples: "transaction-processing", "authentication", "notification"
+     * Inferred from: annotations, interfaces, method names
+     */
     private String businessCapability;
-    private List<String> features;
-    private List<String> concepts;
+
+    /**
+     * Specific features this class implements.
+     * Examples: ["checkout", "refunds", "fraud-detection"]
+     * Inferred from: method names, comments, annotations
+     */
+    @Builder.Default
+    private List<String> features = new ArrayList<>();
+
+    /**
+     * Domain concepts this class deals with.
+     * Examples: ["financial", "PCI-compliant", "transactional", "async"]
+     * Inferred from: annotations, interfaces, field types
+     */
+    @Builder.Default
+    private List<String> concepts = new ArrayList<>();
+
+    // ================================================================
+    // EXISTING FIELDS
+    // ================================================================
 
     @Builder.Default
     private List<String> annotations = new ArrayList<>();
@@ -42,20 +76,12 @@ public class ClassMetadata {
     @Builder.Default
     private List<String> usedLibraries = new ArrayList<>();
 
-    /**
-     * PRODUCTION-GRADE GRAPH EDGES:
-     * Detailed relationships including Type and Cardinality.
-     * Ready for Graph DB export.
-     */
     @Builder.Default
     private Set<DependencyEdge> dependencies = new HashSet<>();
 
     @Builder.Default
     private List<String> innerClasses = new ArrayList<>();
 
-    /**
-     * NEW: Roles detected based on annotations/imports (e.g., "spring-kafka:consumer")
-     */
     @Builder.Default
     private List<String> roles = new ArrayList<>();
 

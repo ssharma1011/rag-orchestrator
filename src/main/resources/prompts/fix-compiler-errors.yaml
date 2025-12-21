@@ -1,0 +1,29 @@
+name: fix-compiler-errors
+version: v1
+model: gemini-1.5-pro
+
+systemPrompt: |
+  You are a Senior Java Engineer.
+  TASK: Fix the compilation errors in the code you generated.
+
+userPrompt: |
+  --- ORIGINAL REQUIREMENTS ---
+  {{requirements}}
+
+  --- COMPILER ERROR LOGS ---
+  {{errors}}
+
+  INSTRUCTIONS:
+  1. Analyze the error logs.
+  2. Generate JSON patches to FIX these specific errors.
+  3. **Do NOT regenerate the whole project.** Only fix broken files.
+
+  OUTPUT SCHEMA (Strict JSON):
+  {
+    "branch_name": "feat/fix-compile-errors",
+    "edits": [
+       { "path": "src/main/java/.../BrokenClass.java", "op": "modify", "content": "<FIXED_CONTENT>" }
+    ],
+    "tests_added": [],
+    "explanation": "Fixed missing import / syntax error."
+  }

@@ -1,12 +1,7 @@
 package com.purchasingpower.autoflow.workflow.agents;
 
-import com.purchasingpower.autoflow.model.graph.GraphNode;
 import com.purchasingpower.autoflow.model.neo4j.ClassNode;
-import com.purchasingpower.autoflow.model.neo4j.MethodNode;
-import com.purchasingpower.autoflow.model.neo4j.FieldNode;
 import com.purchasingpower.autoflow.query.HybridRetriever;
-import com.purchasingpower.autoflow.repository.GraphNodeRepository;
-import com.purchasingpower.autoflow.service.graph.GraphTraversalService;
 import com.purchasingpower.autoflow.storage.Neo4jGraphStore;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
@@ -26,7 +21,7 @@ import java.util.stream.Collectors;
  *
  * Purpose: Get EXACT code for files in scope
  *
- * UPDATED: Now uses HYBRID RETRIEVAL (Pinecone + Neo4j)
+ * Uses NEO4J GRAPH (Oracle removed):
  * - Current file content
  * - Dependencies (what it uses) - FROM NEO4J GRAPH!
  * - Dependents (what uses it) - FROM NEO4J GRAPH!
@@ -42,10 +37,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ContextBuilderAgent {
 
-    private final GraphNodeRepository graphRepo;
-    private final GraphTraversalService graphTraversal;
-
-    // NEW: Neo4j hybrid retrieval components
+    // Neo4j hybrid retrieval components
     private final Neo4jGraphStore neo4jStore;
     private final HybridRetriever hybridRetriever;
 
@@ -133,27 +125,13 @@ public class ContextBuilderAgent {
     }
 
     /**
-     * Build context for single file using KNOWLEDGE GRAPH
+     * Build context for single file using Neo4j KNOWLEDGE GRAPH
      */
     private StructuredContext.FileContext buildFileContext(
             FileAction action,
             String repoName,
             File workspace,
             boolean fileExists) throws Exception {
-
-        String nodeId = repoName + ":" + action.getClassName();
-
-        // Get node from knowledge graph
-        GraphNode node = graphRepo.findById(nodeId).orElse(null);
-
-        if (node == null && fileExists) {
-            log.warn("Node not found in graph: {}", nodeId);
-            // Try by file path
-            node = graphRepo.findByRepoName(repoName).stream()
-                    .filter(n -> action.getFilePath().equals(n.getFilePath()))
-                    .findFirst()
-                    .orElse(null);
-        }
 
         // Read current code
         String currentCode = "";
@@ -164,38 +142,30 @@ public class ContextBuilderAgent {
             }
         }
 
-        // Get dependencies using HYBRID approach:
-        // 1. Legacy Oracle graph (for backward compatibility)
-        // 2. NEW: Neo4j graph (complete relationship tracking)
+        // Get dependencies from Neo4j (SOLVES chunking problem!)
         List<String> dependencies = new ArrayList<>();
         List<String> dependents = new ArrayList<>();
-
-        if (node != null) {
-            // Legacy Oracle dependencies
-            dependencies = graphTraversal.findDirectDependencies(nodeId, repoName);
-            dependents = graphTraversal.findDirectDependents(nodeId, repoName);
-        }
-
-        // NEW: Get dependencies from Neo4j (SOLVES chunking problem!)
         String className = action.getClassName();
+
         try {
             ClassNode neo4jClass = neo4jStore.findClassById("CLASS:" + className);
             if (neo4jClass != null) {
                 // Get Neo4j dependencies (extends, implements, uses)
                 List<ClassNode> neo4jDeps = neo4jStore.findClassDependencies(neo4jClass.getFullyQualifiedName());
-                List<String> neo4jDepNames = neo4jDeps.stream()
+                dependencies = neo4jDeps.stream()
                         .map(ClassNode::getFullyQualifiedName)
                         .collect(Collectors.toList());
 
-                // Merge with Oracle dependencies (remove duplicates)
-                neo4jDepNames.forEach(dep -> {
-                    if (!dependencies.contains(dep)) {
-                        dependencies.add(dep);
-                    }
-                });
+                // Get Neo4j dependents (classes that depend on this)
+                List<ClassNode> neo4jDependents = neo4jStore.findSubclasses(neo4jClass.getFullyQualifiedName());
+                dependents = neo4jDependents.stream()
+                        .map(ClassNode::getFullyQualifiedName)
+                        .collect(Collectors.toList());
 
-                log.info("Neo4j found {} additional dependencies for {}",
-                        neo4jDepNames.size(), className);
+                log.info("Neo4j found {} dependencies and {} dependents for {}",
+                        dependencies.size(), dependents.size(), className);
+            } else {
+                log.warn("Class not found in Neo4j: {}", className);
             }
         } catch (Exception e) {
             log.warn("Failed to get Neo4j dependencies for {}: {}", className, e.getMessage());
@@ -204,7 +174,7 @@ public class ContextBuilderAgent {
         return StructuredContext.FileContext.builder()
                 .filePath(action.getFilePath())
                 .currentCode(currentCode)
-                .purpose(node != null ? node.getSummary() : action.getReason())
+                .purpose(action.getReason())
                 .dependencies(dependencies)
                 .dependents(dependents)
                 .coveredByTests(new ArrayList<>()) // TODO: Find test coverage
@@ -212,7 +182,7 @@ public class ContextBuilderAgent {
     }
 
     /**
-     * Build domain context using KNOWLEDGE GRAPH
+     * Build domain context from Neo4j graph
      */
     private StructuredContext.DomainContext buildDomainContext(
             ScopeProposal scope,
@@ -222,34 +192,17 @@ public class ContextBuilderAgent {
         String domain = scope.getFilesToModify().isEmpty() ? "unknown" :
                 extractDomain(scope.getFilesToModify().get(0).getClassName());
 
-        // Query knowledge graph for all classes in this domain
-        List<GraphNode> domainNodes = graphRepo.findByRepoName(repoName).stream()
-                .filter(node -> domain.equalsIgnoreCase(node.getDomain()))
-                .toList();
-
-        List<String> domainClasses = domainNodes.stream()
-                .map(GraphNode::getFullyQualifiedName)
-                .collect(Collectors.toList());
-
-        // Extract business rules from knowledge graph metadata
-        List<String> businessRules = domainNodes.stream()
-                .map(GraphNode::getBusinessCapability)
-                .distinct()
-                .filter(cap -> cap != null && !cap.isEmpty())
-                .collect(Collectors.toList());
-
-        // Extract concepts
-        List<String> concepts = domainNodes.stream()
-                .flatMap(node -> node.getConcepts() != null ?
-                        node.getConcepts().stream() : new ArrayList<String>().stream())
-                .distinct()
-                .collect(Collectors.toList());
+        // TODO: Query Neo4j for domain-level information
+        // For now, return basic domain context
+        List<String> domainClasses = new ArrayList<>();
+        List<String> businessRules = new ArrayList<>();
+        List<String> concepts = new ArrayList<>();
 
         return StructuredContext.DomainContext.builder()
                 .domain(domain)
                 .businessRules(businessRules)
                 .concepts(concepts)
-                .architecturePattern("Spring Boot MVC") // TODO: Detect from graph
+                .architecturePattern("Spring Boot MVC") // TODO: Detect from Neo4j
                 .domainClasses(domainClasses)
                 .build();
     }

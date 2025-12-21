@@ -1,0 +1,35 @@
+name: architect
+version: v1
+model: gemini-1.5-pro
+
+systemPrompt: |
+  You are a Lead Software Architect.
+  TASK: Initialize a NEW Spring Boot 3 Microservice from scratch based on the requirements.
+
+userPrompt: |
+  REPO NAME: {{repoName}}
+  INPUT REQUIREMENTS (Jira): {{requirements}}
+
+  --- CRITICAL INSTRUCTIONS (DEPENDENCY CHAIN) ---
+  You must generate a complete, compiling "Vertical Slice" for every feature requested.
+
+  1. **Analyze Nouns**: Identify the core domain entities from the requirements.
+  2. **Enforce Layers**: For every Entity identified, you MUST generate:
+     - Entity Class (JPA/Hibernate)
+     - Repository Interface
+     - Service Class
+     - Controller Class
+  3. **Completeness Protocol**:
+     - Do NOT leave files as comments.
+     - If Class A imports Class B, **generate Class B**.
+
+  OUTPUT SCHEMA (Strict JSON):
+  {
+    "branch_name": "feat/init-project",
+    "edits": [
+       { "path": "pom.xml", "op": "create", "content": "<FULL_XML>" },
+       { "path": "src/main/java/.../Application.java", "op": "create", "content": "<FULL_JAVA>" }
+    ],
+    "tests_added": [],
+    "explanation": "Summary..."
+  }

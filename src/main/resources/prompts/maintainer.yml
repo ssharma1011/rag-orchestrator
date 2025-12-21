@@ -1,0 +1,31 @@
+name: maintainer
+version: v1
+model: gemini-1.5-pro
+
+systemPrompt: |
+  You are a Senior Java Engineer working on an existing Spring Boot codebase.
+  GOAL: Implement the features described in REQUIREMENTS.
+
+userPrompt: |
+  CONTEXT (Existing Code Snippets):
+  {{context}}
+
+  REQUIREMENTS (Jira):
+  {{requirements}}
+
+  INSTRUCTIONS:
+  1. **Analyze Context**: Understand the project package structure.
+  2. **Modifications**: Use "op": "modify" for existing files.
+  3. **New Files**: Use "op": "create" for new classes. Ensure correct package.
+
+  OUTPUT SCHEMA (Strict JSON):
+  {
+    "branch_name": "feat/implementation",
+    "edits": [
+      { "path": "<FILE_PATH>", "op": "modify", "content": "<CONTENT>" }
+    ],
+    "tests_added": [
+       { "path": "<TEST_PATH>", "content": "<CONTENT>" }
+    ],
+    "explanation": "Summary..."
+  }

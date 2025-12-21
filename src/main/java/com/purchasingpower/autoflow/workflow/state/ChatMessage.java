@@ -4,6 +4,8 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
+
 /**
  * Single message in conversation
  */
@@ -13,5 +15,5 @@ import lombok.NoArgsConstructor;
 public class ChatMessage {
     private String role;      // "USER", "ASSISTANT", "SYSTEM"
     private String content;
-    private long timestamp;
+    private LocalDateTime timestamp;
 }

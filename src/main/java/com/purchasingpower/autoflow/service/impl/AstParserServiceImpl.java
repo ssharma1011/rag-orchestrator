@@ -4,6 +4,7 @@ import com.purchasingpower.autoflow.model.ast.ChunkType;
 import com.purchasingpower.autoflow.model.ast.*;
 import com.purchasingpower.autoflow.service.AstParserService;
 import com.purchasingpower.autoflow.service.library.LibraryDetectionService;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import spoon.Launcher;
@@ -19,13 +20,14 @@ import java.util.stream.Collectors;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class AstParserServiceImpl implements AstParserService {
 
     private final LibraryDetectionService libraryDetectionService;
 
-    public AstParserServiceImpl(LibraryDetectionService libraryDetectionService) {
+/*    public AstParserServiceImpl(LibraryDetectionService libraryDetectionService) {
         this.libraryDetectionService = libraryDetectionService;
-    }
+    }*/
 
     @Override
     public List<CodeChunk> parseJavaFile(File javaFile, String repoName) {

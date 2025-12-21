@@ -14,4 +14,10 @@ public class GeminiProperties {
 
     @NotBlank
     private String embeddingModel = "text-embedding-004";
+
+    @NotBlank
+    private String baseUrl = "https://generativelanguage.googleapis.com";
+
+    @NotBlank
+    private String apiVersion = "v1beta";
 }

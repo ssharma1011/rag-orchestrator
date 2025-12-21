@@ -2,6 +2,7 @@ package com.purchasingpower.autoflow.workflow.state;
 
 import org.bsc.langgraph4j.state.AgentState;
 import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 

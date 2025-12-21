@@ -10,9 +10,7 @@ import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.StateGraph;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.PostConstruct;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 
 import static org.bsc.langgraph4j.StateGraph.END;
 import static org.bsc.langgraph4j.StateGraph.START;
@@ -109,7 +107,7 @@ public class AutoFlowWorkflow {
         graph.addNode("ask_developer", node_async(state -> {
             log.info("📍 PAUSING for human input...");
             state.setWorkflowStatus("PAUSED");
-            return CompletableFuture.completedFuture(state.toMap());
+            return state.toMap();
         }));
 
         // ================================================================
@@ -221,29 +219,27 @@ public class AutoFlowWorkflow {
      * Execute an agent and update state.
      * Returns Map<String, Object> as required by LangGraph4J.
      */
-    private CompletableFuture<Map<String, Object>> executeAgent(
+    private Map<String, Object> executeAgent(
             String agentName,
             WorkflowState state,
             java.util.function.Function<WorkflowState, AgentDecision> agentFunction) {
 
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                log.info("📍 Executing: {}", agentName);
-                state.setCurrentAgent(agentName);
+        try {
+            log.info("📍 Executing: {}", agentName);
+            state.setCurrentAgent(agentName);
 
-                AgentDecision decision = agentFunction.apply(state);
-                state.setLastAgentDecision(decision);
+            AgentDecision decision = agentFunction.apply(state);
+            state.setLastAgentDecision(decision);
 
-                log.info("✅ {} completed: {}", agentName, decision.getNextStep());
+            log.info("✅ {} completed: {}", agentName, decision.getNextStep());
 
-                return state.toMap();
+            return state.toMap();
 
-            } catch (Exception e) {
-                log.error("❌ {} failed", agentName, e);
-                state.setLastAgentDecision(AgentDecision.error(e.getMessage()));
-                return state.toMap();
-            }
-        });
+        } catch (Exception e) {
+            log.error("❌ {} failed", agentName, e);
+            state.setLastAgentDecision(AgentDecision.error(e.getMessage()));
+            return state.toMap();
+        }
     }
 
     /**

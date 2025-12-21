@@ -1,8 +1,13 @@
 package com.purchasingpower.autoflow.workflow.agents;
 
 import com.purchasingpower.autoflow.model.graph.GraphNode;
+import com.purchasingpower.autoflow.model.neo4j.ClassNode;
+import com.purchasingpower.autoflow.model.neo4j.MethodNode;
+import com.purchasingpower.autoflow.model.neo4j.FieldNode;
+import com.purchasingpower.autoflow.query.HybridRetriever;
 import com.purchasingpower.autoflow.repository.GraphNodeRepository;
 import com.purchasingpower.autoflow.service.graph.GraphTraversalService;
+import com.purchasingpower.autoflow.storage.Neo4jGraphStore;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,13 +26,16 @@ import java.util.stream.Collectors;
  *
  * Purpose: Get EXACT code for files in scope
  *
- * USES KNOWLEDGE GRAPH to build 100% certain context:
+ * UPDATED: Now uses HYBRID RETRIEVAL (Pinecone + Neo4j)
  * - Current file content
- * - Dependencies (what it uses)
- * - Dependents (what uses it)
+ * - Dependencies (what it uses) - FROM NEO4J GRAPH!
+ * - Dependents (what uses it) - FROM NEO4J GRAPH!
+ * - Method callers (what calls its methods) - FROM NEO4J GRAPH!
  * - Domain context (business rules)
  *
- * NO fuzzy matching - only exact graph relationships!
+ * SOLVES CHUNKING PROBLEM:
+ * - Neo4j preserves ALL code relationships
+ * - Can answer: "What calls this?", "What depends on this?", "What will break?"
  */
 @Slf4j
 @Component
@@ -36,6 +44,10 @@ public class ContextBuilderAgent {
 
     private final GraphNodeRepository graphRepo;
     private final GraphTraversalService graphTraversal;
+
+    // NEW: Neo4j hybrid retrieval components
+    private final Neo4jGraphStore neo4jStore;
+    private final HybridRetriever hybridRetriever;
 
     public AgentDecision execute(WorkflowState state) {
         log.info("🔨 Building exact context for {} files...",
@@ -152,13 +164,41 @@ public class ContextBuilderAgent {
             }
         }
 
-        // Get dependencies using KNOWLEDGE GRAPH
+        // Get dependencies using HYBRID approach:
+        // 1. Legacy Oracle graph (for backward compatibility)
+        // 2. NEW: Neo4j graph (complete relationship tracking)
         List<String> dependencies = new ArrayList<>();
         List<String> dependents = new ArrayList<>();
 
         if (node != null) {
+            // Legacy Oracle dependencies
             dependencies = graphTraversal.findDirectDependencies(nodeId, repoName);
             dependents = graphTraversal.findDirectDependents(nodeId, repoName);
+        }
+
+        // NEW: Get dependencies from Neo4j (SOLVES chunking problem!)
+        String className = action.getClassName();
+        try {
+            ClassNode neo4jClass = neo4jStore.findClassById("CLASS:" + className);
+            if (neo4jClass != null) {
+                // Get Neo4j dependencies (extends, implements, uses)
+                List<ClassNode> neo4jDeps = neo4jStore.findClassDependencies(neo4jClass.getFullyQualifiedName());
+                List<String> neo4jDepNames = neo4jDeps.stream()
+                        .map(ClassNode::getFullyQualifiedName)
+                        .collect(Collectors.toList());
+
+                // Merge with Oracle dependencies (remove duplicates)
+                neo4jDepNames.forEach(dep -> {
+                    if (!dependencies.contains(dep)) {
+                        dependencies.add(dep);
+                    }
+                });
+
+                log.info("Neo4j found {} additional dependencies for {}",
+                        neo4jDepNames.size(), className);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to get Neo4j dependencies for {}: {}", className, e.getMessage());
         }
 
         return StructuredContext.FileContext.builder()

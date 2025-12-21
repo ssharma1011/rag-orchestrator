@@ -1,10 +1,13 @@
 package com.purchasingpower.autoflow.workflow.agents;
 
+import com.purchasingpower.autoflow.parser.EntityExtractor;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.MavenBuildService;
 import com.purchasingpower.autoflow.service.impl.IncrementalEmbeddingSyncServiceImpl;
 import com.purchasingpower.autoflow.service.graph.GraphPersistenceService;
 import com.purchasingpower.autoflow.service.AstParserService;
+import com.purchasingpower.autoflow.storage.Neo4jGraphStore;
+import com.purchasingpower.autoflow.model.neo4j.ParsedCodeGraph;
 import com.purchasingpower.autoflow.workflow.state.*;
 import com.purchasingpower.autoflow.model.sync.EmbeddingSyncResult;
 import com.purchasingpower.autoflow.model.ast.CodeChunk;
@@ -13,20 +16,28 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
+import java.nio.file.Path;
 import java.util.List;
 
 /**
  * AGENT 2: Code Indexer
  *
- * Purpose: Clone repo, validate it compiles, index in Pinecone + Oracle
+ * Purpose: Clone repo, validate it compiles, index in Pinecone + Neo4j
+ *
+ * UPDATED: Now uses HYBRID storage:
+ * - Pinecone: Semantic vector search
+ * - Neo4j: Code structure graph (SOLVES chunking problem!)
+ * - Oracle: Legacy graph (being replaced by Neo4j)
  *
  * CRITICAL: Does NOT work on broken repos
  *
  * Steps:
  * 1. Clone repo
  * 2. Baseline build (must pass!)
- * 3. Incremental sync to Pinecone
- * 4. Index in Oracle graph
+ * 3. Incremental sync to Pinecone (semantic search)
+ * 4. Extract code entities + relationships (JavaParser)
+ * 5. Index in Neo4j graph (structure preservation)
+ * 6. Index in Oracle graph (legacy, optional)
  */
 @Slf4j
 @Component
@@ -38,6 +49,10 @@ public class CodeIndexerAgent {
     private final IncrementalEmbeddingSyncServiceImpl embeddingSync;
     private final AstParserService astParser;
     private final GraphPersistenceService graphPersistence;
+
+    // NEW: Neo4j components for hybrid retrieval
+    private final EntityExtractor entityExtractor;
+    private final Neo4jGraphStore neo4jStore;
 
     public AgentDecision execute(WorkflowState state) {
         log.info("📦 Indexing codebase: {}", state.getRepoUrl());
@@ -82,27 +97,55 @@ public class CodeIndexerAgent {
 
             log.info("✅ Pinecone sync: {} chunks", syncResult.getChunksCreated());
 
-            // Step 4: Parse for Oracle graph
-            log.info("📊 Building knowledge graph...");
+            // Step 4: NEW - Extract code entities for Neo4j knowledge graph
+            log.info("📊 Extracting code entities and relationships for Neo4j...");
+            List<File> javaFiles = findJavaFiles(workspace);
+            int totalEntities = 0;
+            int totalRelationships = 0;
+
+            for (File javaFile : javaFiles) {
+                try {
+                    ParsedCodeGraph graph = entityExtractor.extractFromFile(javaFile.toPath());
+
+                    if (!graph.hasErrors()) {
+                        neo4jStore.storeCodeGraph(graph);
+                        totalEntities += graph.getTotalEntities();
+                        totalRelationships += graph.getTotalRelationships();
+                    } else {
+                        log.warn("Parsing errors in {}: {}", javaFile.getName(), graph.getErrors());
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to extract entities from {}: {}", javaFile.getName(), e.getMessage());
+                }
+            }
+
+            log.info("✅ Neo4j graph indexed: {} entities, {} relationships",
+                    totalEntities, totalRelationships);
+
+            // Step 5: Legacy Oracle graph indexing (optional, keeping for backward compatibility)
+            log.info("📊 Building legacy Oracle knowledge graph...");
             List<CodeChunk> chunks = parseAllJavaFiles(workspace);
             state.setParsedCode(chunks);
 
-            // Step 5: Persist to Oracle
+            // Step 6: Persist to Oracle
             graphPersistence.persistChunks(
                     chunks,
                     extractRepoName(state.getRepoUrl())
             );
 
-            log.info("✅ Graph indexed: {} nodes", chunks.size());
+            log.info("✅ Legacy graph indexed: {} nodes", chunks.size());
 
-            // Step 6: Store indexing result
+            // Step 7: Store indexing result
             state.setIndexingResult(IndexingResult.builder()
                     .success(true)
                     .filesProcessed(syncResult.getFilesAnalyzed())
                     .chunksCreated(syncResult.getChunksCreated())
                     .build());
 
-            return AgentDecision.proceed("Indexing complete, proceeding to context building");
+            return AgentDecision.proceed(String.format(
+                    "Indexing complete: %d Pinecone chunks, %d Neo4j entities, %d relationships. " +
+                    "Hybrid retrieval enabled - NO MORE CHUNKING PROBLEMS!",
+                    syncResult.getChunksCreated(), totalEntities, totalRelationships));
 
         } catch (Exception e) {
             log.error("❌ Indexing failed", e);

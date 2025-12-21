@@ -313,4 +313,23 @@ public class WorkflowState extends AgentState {
             return new WorkflowState(data);
         }
     }
+
+    // ================================================================
+    // CONVERSION METHODS (Required by LangGraph4J workflow)
+    // ================================================================
+
+    /**
+     * Convert WorkflowState to Map for LangGraph4J.
+     * Returns the underlying data map.
+     */
+    public Map<String, Object> toMap() {
+        return data();
+    }
+
+    /**
+     * Create WorkflowState from Map (returned by LangGraph4J).
+     */
+    public static WorkflowState fromMap(Map<String, Object> map) {
+        return new WorkflowState(map);
+    }
 }

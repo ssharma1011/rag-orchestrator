@@ -1,48 +1,20 @@
 package com.purchasingpower.autoflow.workflow.state;
 
 import org.bsc.langgraph4j.state.AgentState;
-import org.bsc.langgraph4j.state.Channel;
-import org.bsc.langgraph4j.state.Channels;
 import java.io.File;
+import java.util.List;
 import java.util.Map;
 
 /**
- * COMPLETE WorkflowState for LangGraph4J - FIXED CHANNEL API.
+ * WorkflowState for LangGraph4J workflow orchestration.
  *
- * REPLACES your current WorkflowState.java entirely.
- *
- * KEY FIX: Uses Channels.lastValue() which is the actual LangGraph4J API
+ * Simplified implementation without explicit schema definition.
+ * LangGraph4j handles state management through the AgentState base class.
  */
 public class WorkflowState extends AgentState {
 
     // ================================================================
-    // SCHEMA (Required by LangGraph4J)
-    // Uses Channels.lastValue() - the CORRECT API
-    // ================================================================
-
-    public static final Map<String, Channel<?>> SCHEMA = Map.ofEntries(
-            // Simple fields - last write wins
-            Map.entry("conversationId", Channels.lastValue(String.class)),
-            Map.entry("userId", Channels.lastValue(String.class)),
-            Map.entry("requirement", Channels.lastValue(String.class)),
-            Map.entry("jiraUrl", Channels.lastValue(String.class)),
-            Map.entry("targetClass", Channels.lastValue(String.class)),
-            Map.entry("repoUrl", Channels.lastValue(String.class)),
-            Map.entry("baseBranch", Channels.lastValue(String.class)),
-            Map.entry("logsPasted", Channels.lastValue(String.class)),
-            Map.entry("workflowStatus", Channels.lastValue(String.class)),
-            Map.entry("currentAgent", Channels.lastValue(String.class)),
-            Map.entry("buildAttempt", Channels.lastValue(Integer.class)),
-            Map.entry("reviewAttempt", Channels.lastValue(Integer.class)),
-            Map.entry("currentCommit", Channels.lastValue(String.class)),
-            Map.entry("prDescription", Channels.lastValue(String.class)),
-            Map.entry("prUrl", Channels.lastValue(String.class)),
-            Map.entry("branchName", Channels.lastValue(String.class)),
-            Map.entry("workspaceDir", Channels.lastValue(File.class))
-    );
-
-    // ================================================================
-    // CONSTRUCTOR (Required by LangGraph4J)
+    // CONSTRUCTOR
     // ================================================================
 
     public WorkflowState(Map<String, Object> initData) {
@@ -247,6 +219,54 @@ public class WorkflowState extends AgentState {
 
     public void setIndexingResult(IndexingResult result) {
         data().put("indexingResult", result);
+    }
+
+    public void setParsedCode(Object parsedCode) {
+        data().put("parsedCode", parsedCode);
+    }
+
+    public Object getParsedCode() {
+        return value("parsedCode").orElse(null);
+    }
+
+    public List<ChatMessage> getConversationHistory() {
+        return this.<List<ChatMessage>>value("conversationHistory").orElse(List.of());
+    }
+
+    public void setConversationHistory(List<ChatMessage> history) {
+        data().put("conversationHistory", history);
+    }
+
+    public void setJiraUrl(String jiraUrl) {
+        data().put("jiraUrl", jiraUrl);
+    }
+
+    public void setRepoUrl(String repoUrl) {
+        data().put("repoUrl", repoUrl);
+    }
+
+    public void setRequirement(String requirement) {
+        data().put("requirement", requirement);
+    }
+
+    public void setUserId(String userId) {
+        data().put("userId", userId);
+    }
+
+    public void setTargetClass(String targetClass) {
+        data().put("targetClass", targetClass);
+    }
+
+    public void setBaseBranch(String baseBranch) {
+        data().put("baseBranch", baseBranch);
+    }
+
+    public void setLogsPasted(String logsPasted) {
+        data().put("logsPasted", logsPasted);
+    }
+
+    public void setCurrentCommit(String currentCommit) {
+        data().put("currentCommit", currentCommit);
     }
 
     // ================================================================

@@ -4,19 +4,15 @@ import com.purchasingpower.autoflow.parser.EntityExtractor;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.MavenBuildService;
 import com.purchasingpower.autoflow.service.impl.IncrementalEmbeddingSyncServiceImpl;
-import com.purchasingpower.autoflow.service.graph.GraphPersistenceService;
-import com.purchasingpower.autoflow.service.AstParserService;
 import com.purchasingpower.autoflow.storage.Neo4jGraphStore;
 import com.purchasingpower.autoflow.model.neo4j.ParsedCodeGraph;
 import com.purchasingpower.autoflow.workflow.state.*;
 import com.purchasingpower.autoflow.model.sync.EmbeddingSyncResult;
-import com.purchasingpower.autoflow.model.ast.CodeChunk;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
-import java.nio.file.Path;
 import java.util.List;
 
 /**
@@ -24,10 +20,9 @@ import java.util.List;
  *
  * Purpose: Clone repo, validate it compiles, index in Pinecone + Neo4j
  *
- * UPDATED: Now uses HYBRID storage:
+ * HYBRID STORAGE (Oracle removed):
  * - Pinecone: Semantic vector search
  * - Neo4j: Code structure graph (SOLVES chunking problem!)
- * - Oracle: Legacy graph (being replaced by Neo4j)
  *
  * CRITICAL: Does NOT work on broken repos
  *
@@ -37,7 +32,6 @@ import java.util.List;
  * 3. Incremental sync to Pinecone (semantic search)
  * 4. Extract code entities + relationships (JavaParser)
  * 5. Index in Neo4j graph (structure preservation)
- * 6. Index in Oracle graph (legacy, optional)
  */
 @Slf4j
 @Component
@@ -47,10 +41,8 @@ public class CodeIndexerAgent {
     private final GitOperationsService gitService;
     private final MavenBuildService buildService;
     private final IncrementalEmbeddingSyncServiceImpl embeddingSync;
-    private final AstParserService astParser;
-    private final GraphPersistenceService graphPersistence;
 
-    // NEW: Neo4j components for hybrid retrieval
+    // Neo4j components for hybrid retrieval
     private final EntityExtractor entityExtractor;
     private final Neo4jGraphStore neo4jStore;
 
@@ -122,20 +114,7 @@ public class CodeIndexerAgent {
             log.info("✅ Neo4j graph indexed: {} entities, {} relationships",
                     totalEntities, totalRelationships);
 
-            // Step 5: Legacy Oracle graph indexing (optional, keeping for backward compatibility)
-            log.info("📊 Building legacy Oracle knowledge graph...");
-            List<CodeChunk> chunks = parseAllJavaFiles(workspace);
-            state.setParsedCode(chunks);
-
-            // Step 6: Persist to Oracle
-            graphPersistence.persistChunks(
-                    chunks,
-                    extractRepoName(state.getRepoUrl())
-            );
-
-            log.info("✅ Legacy graph indexed: {} nodes", chunks.size());
-
-            // Step 7: Store indexing result
+            // Step 5: Store indexing result
             state.setIndexingResult(IndexingResult.builder()
                     .success(true)
                     .filesProcessed(syncResult.getFilesAnalyzed())
@@ -158,17 +137,6 @@ public class CodeIndexerAgent {
         // https://github.com/user/repo.git → repo
         String[] parts = repoUrl.replace(".git", "").split("/");
         return parts[parts.length - 1];
-    }
-
-    private List<CodeChunk> parseAllJavaFiles(File workspace) {
-        // Find all Java files
-        List<File> javaFiles = findJavaFiles(workspace);
-
-        // Parse with AST
-        return astParser.parseJavaFiles(
-                javaFiles,
-                extractRepoName(workspace.getName())
-        );
     }
 
     private List<File> findJavaFiles(File root) {

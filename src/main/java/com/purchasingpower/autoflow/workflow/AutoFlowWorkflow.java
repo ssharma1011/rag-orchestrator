@@ -55,10 +55,7 @@ public class AutoFlowWorkflow {
     public void initialize() {
         log.info("🚀 Initializing AutoFlow workflow graph with LangGraph4J...");
 
-        StateGraph<WorkflowState> graph = new StateGraph<>(
-                WorkflowState.SCHEMA,
-                WorkflowState::new
-        );
+        StateGraph<WorkflowState> graph = new StateGraph<>(WorkflowState::new);
 
         // ================================================================
         // DEFINE ALL NODES (Agents)

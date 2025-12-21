@@ -69,6 +69,13 @@
             <version>${spoon.version}</version>
         </dependency>
 
+        <!-- JavaParser - For Neo4j knowledge graph extraction -->
+        <dependency>
+            <groupId>com.github.javaparser</groupId>
+            <artifactId>javaparser-symbol-solver-core</artifactId>
+            <version>3.25.5</version>
+        </dependency>
+
         <!-- =============================================================== -->
         <!-- DEPENDENCY GRAPH (JGraphT) - For call chain analysis -->
         <!-- =============================================================== -->

@@ -196,6 +196,14 @@
             <artifactId>langgraph4j-core</artifactId>
             <version>1.7.7</version>
         </dependency>
+
+        <!-- Mustache templating for prompts (used by PromptLibraryService) -->
+        <dependency>
+            <groupId>com.github.spullara.mustache.java</groupId>
+            <artifactId>compiler</artifactId>
+            <version>0.9.10</version>
+        </dependency>
+
         <dependency>
             <groupId>org.neo4j.driver</groupId>
             <artifactId>neo4j-java-driver</artifactId>

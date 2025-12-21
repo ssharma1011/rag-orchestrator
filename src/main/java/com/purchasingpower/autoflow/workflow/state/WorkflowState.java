@@ -273,6 +273,26 @@ public class WorkflowState extends AgentState {
     // HELPER METHODS (All your existing ones)
     // ================================================================
 
+    /**
+     * Add a message to the conversation history.
+     * Used for tracking user/agent interactions.
+     */
+    public void addChatMessage(String role, String content) {
+        List<ChatMessage> history = getConversationHistory();
+        if (history == null) {
+            history = new ArrayList<>();
+        }
+
+        ChatMessage message = ChatMessage.builder()
+                .role(role)
+                .content(content)
+                .timestamp(java.time.LocalDateTime.now())
+                .build();
+
+        history.add(message);
+        setConversationHistory(history);
+    }
+
     public boolean hasLogs() {
         String logs = getLogsPasted();
         return logs != null && !logs.isBlank();

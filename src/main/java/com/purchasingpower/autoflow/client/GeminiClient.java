@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.purchasingpower.autoflow.configuration.AppProperties;
 import com.purchasingpower.autoflow.model.llm.CodeGenerationResponse;
+import com.purchasingpower.autoflow.service.PromptLibraryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -12,6 +13,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.util.retry.Retry;
 
+import jakarta.annotation.PostConstruct;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,234 +26,93 @@ public class GeminiClient {
 
     private final AppProperties props;
     private final ObjectMapper objectMapper;
+    private final PromptLibraryService promptLibrary;
 
-    // ✅ FIX: Increase buffer size to 16MB to handle large embedding responses
-    // This is the ONLY change needed - the response from 100 embeddings is ~1MB
-    private final WebClient geminiWebClient = WebClient.builder()
-            .baseUrl("https://generativelanguage.googleapis.com")
-            .exchangeStrategies(ExchangeStrategies.builder()
-                    .codecs(configurer -> configurer
-                            .defaultCodecs()
-                            .maxInMemorySize(16 * 1024 * 1024)) // 16MB buffer (was 256KB)
-                    .build())
-            .build();
+    private WebClient geminiWebClient;
 
-    // -----------------------------------------------------------------------
-    // 1. EMBEDDING (Vector Logic)
-    // -----------------------------------------------------------------------
+    @PostConstruct
+    public void init() {
+        this.geminiWebClient = WebClient.builder()
+                .baseUrl(props.getGemini().getBaseUrl())
+                .exchangeStrategies(ExchangeStrategies.builder()
+                        .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
+                        .build())
+                .build();
+    }
 
-    /**
-     * Creates embeddings for multiple texts in a single batch request.
-     * Much faster than calling createEmbedding() in a loop.
-     * Gemini supports up to 100 texts per batch.
-     *
-     * @param texts List of texts to embed (class summaries, method bodies, etc.)
-     * @return List of embedding vectors (same order as input)
-     */
+    private String getApiUrl(String model, String action) {
+        return String.format("/%s/models/%s:%s?key=%s",
+                props.getGemini().getApiVersion(), model, action, props.getGemini().getApiKey());
+    }
+
     public List<List<Double>> batchCreateEmbeddings(List<String> texts) {
-        if (texts == null || texts.isEmpty()) {
-            return new ArrayList<>();
-        }
-
-        log.info("Creating embeddings for {} texts using batch API", texts.size());
-
+        if (texts == null || texts.isEmpty()) return new ArrayList<>();
         List<List<Double>> allEmbeddings = new ArrayList<>();
-        int batchSize = 100; // ✅ Keep at 100 - Gemini's limit
-
-        // Split into batches of 100
+        int batchSize = 100;
         for (int i = 0; i < texts.size(); i += batchSize) {
             int end = Math.min(i + batchSize, texts.size());
-            List<String> batch = texts.subList(i, end);
-
-            log.debug("Processing batch {}-{} of {}", i, end, texts.size());
-
-            List<List<Double>> batchEmbeddings = callBatchEmbeddingApi(batch);
-            allEmbeddings.addAll(batchEmbeddings);
-
-            // Throttle between batches to avoid rate limits
-            if (end < texts.size()) {
-                try {
-                    Thread.sleep(2000); // 2 second delay between batches
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new RuntimeException("Embedding interrupted", e);
-                }
-            }
+            allEmbeddings.addAll(callBatchEmbeddingApi(texts.subList(i, end)));
         }
-
-        log.info("Created {} embeddings successfully", allEmbeddings.size());
         return allEmbeddings;
     }
 
-    /**
-     * Internal method: Calls Gemini's batch embedding API.
-     */
     private List<List<Double>> callBatchEmbeddingApi(List<String> batch) {
         String model = props.getGemini().getEmbeddingModel();
-        String url = "/v1beta/models/" + model + ":batchEmbedContents?key=" + props.getGemini().getApiKey();
+        String url = getApiUrl(model, "batchEmbedContents");
 
-        // Build batch request body - NO truncation, send full text
         List<Map<String, Object>> requests = batch.stream()
-                .map(text -> Map.of(
-                        "model", "models/" + model,
-                        "content", Map.of("parts", List.of(Map.of("text", text)))
-                ))
+                .map(text -> Map.of("model", "models/" + model, "content", Map.of("parts", List.of(Map.of("text", text)))))
                 .toList();
 
-        Map<String, Object> body = Map.of("requests", requests);
-
         try {
-            JsonNode response = geminiWebClient.post().uri(url).bodyValue(body)
-                    .retrieve()
-                    .bodyToMono(JsonNode.class)
-                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(2)).filter(this::isRetryable))
-                    .block();
+            JsonNode response = geminiWebClient.post().uri(url).bodyValue(Map.of("requests", requests))
+                    .retrieve().bodyToMono(JsonNode.class)
+                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(2)).filter(this::isRetryable)).block();
 
-            // Parse response
             List<List<Double>> embeddings = new ArrayList<>();
-            assert response != null;
-            JsonNode embeddingsNode = response.path("embeddings");
-
-            if (embeddingsNode.isArray()) {
-                for (JsonNode embeddingNode : embeddingsNode) {
-                    List<Double> embedding = objectMapper.convertValue(
-                            embeddingNode.path("values"),
-                            List.class
-                    );
-                    embeddings.add(embedding);
+            if (response != null && response.path("embeddings").isArray()) {
+                for (JsonNode node : response.path("embeddings")) {
+                    embeddings.add(objectMapper.convertValue(node.path("values"), List.class));
                 }
             }
-
             return embeddings;
-
         } catch (Exception e) {
-            log.error("Batch embedding failed for {} texts: {}", batch.size(), e.getMessage());
-            throw new RuntimeException("Failed to batch embed texts", e);
+            log.error("Batch embedding failed", e);
+            throw new RuntimeException("Failed to embed", e);
         }
     }
 
-    /**
-     * Legacy single embedding method (kept for backward compatibility).
-     */
     public List<Double> createEmbedding(String text) {
         List<List<Double>> result = batchCreateEmbeddings(List.of(text));
         return result.isEmpty() ? new ArrayList<>() : result.get(0);
     }
 
-    // -----------------------------------------------------------------------
-    // 2. SCAFFOLDING (New Projects) - The "Architect" Mode
-    // -----------------------------------------------------------------------
     public CodeGenerationResponse generateScaffold(String requirements, String repoName) {
-        String prompt = buildArchitectPrompt(requirements, repoName);
+        String prompt = promptLibrary.render("architect", Map.of("requirements", requirements, "repoName", repoName));
         return callChatApi(prompt);
     }
 
-    private String buildArchitectPrompt(String requirements, String repoName) {
-        return """
-            SYSTEM: You are a Lead Software Architect.
-            TASK: Initialize a NEW Spring Boot 3 Microservice from scratch based on the requirements.
-            
-            REPO NAME: %s
-            INPUT REQUIREMENTS (Jira): %s
-            
-            --- CRITICAL INSTRUCTIONS (DEPENDENCY CHAIN) ---
-            You must generate a complete, compiling "Vertical Slice" for every feature requested.
-            
-            1. **Analyze Nouns**: Identify the core domain entities from the requirements (e.g., if it says "Manage Inventory", the entity is 'Inventory').
-            2. **Enforce Layers**: For every Entity identified, you MUST generate:
-               - The **Entity** Class (JPA/Hibernate)
-               - The **Repository** Interface (extending JpaRepository)
-               - The **Service** Class (Business Logic)
-               - The **Controller** Class (REST Endpoints)
-            3. **Completeness Protocol**:
-               - Do NOT leave files as comments.
-               - If Class A imports Class B, **you MUST generate Class B** in the 'edits' list.
-               - Ensure the package structure is consistent (e.g., com.product.management...).
-            
-            OUTPUT SCHEMA (Strict JSON):
-            {
-              "branch_name": "feat/init-project",
-              "edits": [
-                 { "path": "pom.xml", "op": "create", "content": "<FULL_XML>" },
-                 { "path": "src/main/java/<PACKAGE_PATH>/Application.java", "op": "create", "content": "<FULL_JAVA>" },
-                 { "path": "src/main/java/<PACKAGE_PATH>/model/<EntityName>.java", "op": "create", "content": "<FULL_JAVA>" },
-                 { "path": "src/main/java/<PACKAGE_PATH>/repository/<EntityName>Repository.java", "op": "create", "content": "<FULL_JAVA>" },
-                 { "path": "src/main/java/<PACKAGE_PATH>/service/<EntityName>Service.java", "op": "create", "content": "<FULL_JAVA>" },
-                 { "path": "src/main/java/<PACKAGE_PATH>/controller/<EntityName>Controller.java", "op": "create", "content": "<FULL_JAVA>" }
-              ],
-              "tests_added": [
-                 { "path": "src/test/java/<PACKAGE_PATH>/<EntityName>ControllerTest.java", "content": "<FULL_JAVA>" }
-              ],
-              "explanation": "I created the full stack for [Entity] based on requirements."
-            }
-            """.formatted(repoName, requirements);
-    }
-
-    // -----------------------------------------------------------------------
-    // 3. MAINTENANCE (Existing Projects) - The "Maintainer" Mode
-    // -----------------------------------------------------------------------
     public CodeGenerationResponse generateCodePlan(String requirements, String context) {
-        String prompt = buildMaintainerPrompt(requirements, context);
+        String prompt = promptLibrary.render("maintainer", Map.of("requirements", requirements, "context", context));
         return callChatApi(prompt);
     }
 
-    private String buildMaintainerPrompt(String req, String ctx) {
-        return """
-            SYSTEM: You are a Senior Java Engineer working on an existing Spring Boot codebase.
-            
-            GOAL: Implement the features described in REQUIREMENTS.
-            
-            CONTEXT (Existing Code Snippets retrieved via RAG):
-            %s
-            
-            REQUIREMENTS (Jira):
-            %s
-            
-            INSTRUCTIONS:
-            1. **Analyze Context**: Use the provided files to understand the ACTUAL project package structure and libraries.
-            2. **Modifications**: If an existing class needs changes, output an edit with "op": "modify".
-            3. **New Files (CRITICAL)**:
-               - If the requirement implies a new DTO, Entity, or Service that does NOT exist in the context, **YOU MUST CREATE IT**.
-               - Use "op": "create".
-               - **IMPORTANT**: Use the SAME package structure found in the Context.
-            
-            OUTPUT SCHEMA (Strict JSON):
-            {
-              "branch_name": "feat/<jira-key>-implementation",
-              "edits": [
-                { "path": "<EXISTING_FILE_PATH>", "op": "modify", "content": "<FULL_UPDATED_CONTENT>" },
-                { "path": "<NEW_FILE_PATH>", "op": "create", "content": "<FULL_NEW_CONTENT>" }
-              ],
-              "tests_added": [
-                 { "path": "<TEST_PATH>", "content": "<FULL_TEST_CONTENT>" }
-              ],
-              "explanation": "Brief summary of changes."
-            }
-            """.formatted(ctx, req);
+    public CodeGenerationResponse generateFix(String buildLogs, String originalRequirements) {
+        String prompt = promptLibrary.render("fix-compiler-errors", Map.of("requirements", originalRequirements, "errors", buildLogs));
+        return callChatApi(prompt);
     }
 
-    // -----------------------------------------------------------------------
-    // SHARED API CALL LOGIC
-    // -----------------------------------------------------------------------
     private CodeGenerationResponse callChatApi(String prompt) {
         String model = props.getGemini().getChatModel();
-        String url = "/v1beta/models/" + model + ":generateContent?key=" + props.getGemini().getApiKey();
-
+        String url = getApiUrl(model, "generateContent");
         Map<String, Object> body = Map.of(
                 "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
-                "generationConfig", Map.of(
-                        "responseMimeType", "application/json",
-                        "temperature", 0.2,
-                        "maxOutputTokens", 8192
-                )
-        );
+                "generationConfig", Map.of("responseMimeType", "application/json", "temperature", 0.2));
 
         try {
             String json = geminiWebClient.post().uri(url).bodyValue(body)
                     .retrieve().bodyToMono(String.class)
-                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(10)).filter(this::isRetryable))
-                    .block();
-
+                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(10)).filter(this::isRetryable)).block();
             return parseResponse(json);
         } catch (Exception e) {
             log.error("Gemini Chat failed", e);
@@ -259,107 +120,32 @@ public class GeminiClient {
         }
     }
 
+    public String generateText(String prompt) {
+        String model = props.getGemini().getChatModel();
+        String url = getApiUrl(model, "generateContent");
+        Map<String, Object> body = Map.of(
+                "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
+                "generationConfig", Map.of("temperature", 0.7));
+
+        try {
+            String json = geminiWebClient.post().uri(url).bodyValue(body)
+                    .retrieve().bodyToMono(String.class)
+                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(10)).filter(this::isRetryable)).block();
+            JsonNode root = objectMapper.readTree(json);
+            return root.path("candidates").get(0).path("content").path("parts").get(0).path("text").asText();
+        } catch (Exception e) {
+            log.error("Text generation failed", e);
+            return "Error: " + e.getMessage();
+        }
+    }
+
     private boolean isRetryable(Throwable ex) {
-        return ex instanceof WebClientResponseException.TooManyRequests ||
-                ex instanceof WebClientResponseException.InternalServerError ||
-                ex instanceof WebClientResponseException.BadGateway ||
-                ex instanceof WebClientResponseException.ServiceUnavailable;
+        return ex instanceof WebClientResponseException.TooManyRequests || ex instanceof WebClientResponseException.InternalServerError;
     }
 
     private CodeGenerationResponse parseResponse(String rawJson) throws Exception {
         JsonNode root = objectMapper.readTree(rawJson);
-
-        if (!root.path("promptFeedback").path("blockReason").isMissingNode()) {
-            throw new RuntimeException("Gemini Blocked content: " + root.path("promptFeedback").toString());
-        }
-
-        JsonNode candidates = root.path("candidates");
-        if (candidates.isEmpty()) {
-            throw new RuntimeException("Gemini returned no candidates. The model may have refused the prompt.");
-        }
-
-        String content = candidates.get(0)
-                .path("content").path("parts").get(0)
-                .path("text").asText();
-
+        String content = root.path("candidates").get(0).path("content").path("parts").get(0).path("text").asText();
         return objectMapper.readValue(content, CodeGenerationResponse.class);
-    }
-
-    public CodeGenerationResponse generateFix(String buildLogs, String originalRequirements) {
-        String prompt = """
-            SYSTEM: You are a Senior Java Engineer.
-            TASK: Fix the compilation errors in the code you generated.
-            
-            --- ORIGINAL REQUIREMENTS ---
-            %s
-            
-            --- COMPILER ERROR LOGS ---
-            %s
-            
-            INSTRUCTIONS:
-            1. Analyze the error logs (look for 'cannot find symbol', 'syntax error', etc).
-            2. Generate JSON patches to FIX these specific errors.
-            3. **Do NOT regenerate the whole project.** Only fix the broken files or create missing ones.
-            4. If the log says "package com.example.model does not exist", create that package and class.
-            
-            OUTPUT SCHEMA (Strict JSON):
-            {
-              "branch_name": "feat/fix-compile-errors",
-              "edits": [
-                 { "path": "src/main/java/.../BrokenClass.java", "op": "modify", "content": "<FIXED_CONTENT>" }
-              ],
-              "tests_added": [],
-              "explanation": "Fixed missing import / syntax error."
-            }
-            """.formatted(originalRequirements, buildLogs);
-
-        return callChatApi(prompt);
-    }
-
-
-    /**
-     * Generate plain text response (non-JSON).
-     * Used for conversational responses, questions, explanations.
-     */
-    public String generateText(String prompt) {
-        String model = props.getGemini().getChatModel();
-        String url = "/v1beta/models/" + model + ":generateContent?key=" + props.getGemini().getApiKey();
-
-        Map<String, Object> body = Map.of(
-                "contents", List.of(
-                        Map.of("parts", List.of(Map.of("text", prompt)))
-                ),
-                "generationConfig", Map.of(
-                        "temperature", 0.7,
-                        "maxOutputTokens", 2048
-                        // NO responseMimeType - returns plain text
-                )
-        );
-
-        try {
-            String json = geminiWebClient.post()
-                    .uri(url)
-                    .bodyValue(body)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(10))
-                            .filter(this::isRetryable))
-                    .block();
-
-            JsonNode root = objectMapper.readTree(json);
-
-            // Extract text from response
-            return root.path("candidates")
-                    .get(0)
-                    .path("content")
-                    .path("parts")
-                    .get(0)
-                    .path("text")
-                    .asText();
-
-        } catch (Exception e) {
-            log.error("Gemini text generation failed", e);
-            return "Error: Could not generate response - " + e.getMessage();
-        }
     }
 }

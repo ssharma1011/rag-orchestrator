@@ -111,12 +111,11 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
             }
 
             // Deserialize state from JSON
-            WorkflowState state = objectMapper.readValue(
+
+            return objectMapper.readValue(
                     entity.getStateJson(),
                     WorkflowState.class
             );
-
-            return state;
 
         } catch (Exception e) {
             log.error("Failed to load workflow state", e);

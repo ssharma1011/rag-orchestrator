@@ -1,39 +1,46 @@
 package com.purchasingpower.autoflow.controller;
 
+import com.purchasingpower.autoflow.model.dto.WorkflowHistoryResponse;
+import com.purchasingpower.autoflow.model.dto.*;
 import com.purchasingpower.autoflow.service.WorkflowExecutionService;
-import com.purchasingpower.autoflow.workflow.state.WorkflowState;
-import com.purchasingpower.autoflow.workflow.state.FileUpload;
 import com.purchasingpower.autoflow.workflow.state.ChatMessage;
-import lombok.Data;
+import com.purchasingpower.autoflow.workflow.state.WorkflowState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import static java.util.Map.entry;
 
+/**
+ * REST controller for workflow operations.
+ *
+ * IMPORTANT: Never calls setters on WorkflowState after LangGraph4j processing.
+ * Uses Map manipulation to avoid UnsupportedOperationException.
+ */
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/workflows")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*")
 public class WorkflowController {
 
     private final WorkflowExecutionService workflowService;
 
+    /**
+     * Start a new workflow.
+     */
     @PostMapping("/start")
-    public ResponseEntity<WorkflowResponse> startWorkflow(@RequestBody StartWorkflowRequest request) {
-        log.info("Starting workflow for: {}", request.getRequirement());
-
+    public ResponseEntity<WorkflowResponse> startWorkflow(@RequestBody WorkflowRequest request) {
         try {
+            log.info("Starting workflow for user: {}", request.getUserId());
+
             WorkflowState initialState = WorkflowState.builder()
                     .requirement(request.getRequirement())
-                    .targetClass(request.getTargetClass())
                     .repoUrl(request.getRepoUrl())
                     .baseBranch(request.getBaseBranch() != null ? request.getBaseBranch() : "main")
                     .jiraUrl(request.getJiraUrl())
@@ -41,7 +48,6 @@ public class WorkflowController {
                     .userId(request.getUserId())
                     .build();
 
-            // Pass WorkflowState directly. Service must accept WorkflowState.
             WorkflowState result = workflowService.startWorkflow(initialState);
             return ResponseEntity.ok(WorkflowResponse.fromState(result));
 
@@ -52,28 +58,62 @@ public class WorkflowController {
         }
     }
 
-    @PostMapping("/upload-logs")
-    public ResponseEntity<UploadResponse> uploadLogs(@RequestParam("files") List<MultipartFile> files) {
+    /**
+     * Respond to agent question (resume paused workflow).
+     *
+     * CRITICAL: Does NOT call state.addChatMessage() - creates new state instead.
+     */
+    @PostMapping("/{conversationId}/respond")
+    public ResponseEntity<WorkflowResponse> respondToPrompt(
+            @PathVariable String conversationId,
+            @RequestBody UserResponse userResponse) {
         try {
-            List<FileUpload> uploads = new ArrayList<>();
-            for (MultipartFile file : files) {
-                FileUpload upload = FileUpload.builder()
-                        .fileName(file.getOriginalFilename())
-                        .contentType(file.getContentType())
-                        .sizeBytes(file.getSize()) // Fixed: Matches field name in FileUpload
-                        .uploadedAt(System.currentTimeMillis())
-                        .fileType(FileUpload.detectType(file.getOriginalFilename()))
-                        .build();
-                uploads.add(upload);
+            WorkflowState state = workflowService.getWorkflowState(conversationId);
+            if (state == null) return ResponseEntity.notFound().build();
+
+            Map<String, Object> data = new HashMap<>(state.toMap());
+
+            // Get current history
+            @SuppressWarnings("unchecked")
+            List<ChatMessage> history = (List<ChatMessage>) data.getOrDefault("conversationHistory", new ArrayList<>());
+            List<ChatMessage> newHistory = new ArrayList<>(history);
+
+            // Add user response
+            ChatMessage userMessage = new ChatMessage();
+            userMessage.setRole("user");
+            userMessage.setContent(userResponse.getResponse());
+            userMessage.setTimestamp(LocalDateTime.now());
+            newHistory.add(userMessage);
+
+            // Add additional context if provided
+            if (userResponse.getAdditionalContext() != null) {
+                ChatMessage contextMessage = new ChatMessage();
+                contextMessage.setRole("user");
+                contextMessage.setContent("Context: " + userResponse.getAdditionalContext());
+                contextMessage.setTimestamp(LocalDateTime.now());
+                newHistory.add(contextMessage);
             }
-            return ResponseEntity.ok(new UploadResponse(true, "Uploaded " + uploads.size() + " files", uploads));
+
+            // Update data with new history
+            data.put("conversationHistory", newHistory);
+
+            // Create new state (don't modify original)
+            WorkflowState updatedState = WorkflowState.fromMap(data);
+
+            // Resume workflow
+            WorkflowState result = workflowService.resumeWorkflow(updatedState);
+            return ResponseEntity.ok(WorkflowResponse.fromState(result));
 
         } catch (Exception e) {
+            log.error("Failed to resume workflow", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(new UploadResponse(false, e.getMessage(), null));
+                    .body(WorkflowResponse.error(e.getMessage()));
         }
     }
 
+    /**
+     * Get current workflow status.
+     */
     @GetMapping("/{conversationId}/status")
     public ResponseEntity<WorkflowResponse> getStatus(@PathVariable String conversationId) {
         try {
@@ -86,140 +126,25 @@ public class WorkflowController {
         }
     }
 
-    @PostMapping("/{conversationId}/respond")
-    public ResponseEntity<WorkflowResponse> respondToPrompt(
-            @PathVariable String conversationId,
-            @RequestBody UserResponse userResponse) {
-        try {
-            WorkflowState state = workflowService.getWorkflowState(conversationId);
-            if (state == null) return ResponseEntity.notFound().build();
-
-            state.addChatMessage("user", userResponse.getResponse());
-            if (userResponse.getAdditionalContext() != null) {
-                state.addChatMessage("user", "Context: " + userResponse.getAdditionalContext());
-            }
-
-            WorkflowState result = workflowService.resumeWorkflow(state);
-            return ResponseEntity.ok(WorkflowResponse.fromState(result));
-
-        } catch (Exception e) {
-            log.error("Failed to resume workflow", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(WorkflowResponse.error(e.getMessage()));
-        }
-    }
-
+    /**
+     * Get conversation history.
+     */
     @GetMapping("/{conversationId}/history")
-    public ResponseEntity<ConversationHistory> getHistory(@PathVariable String conversationId) {
+    public ResponseEntity<WorkflowHistoryResponse> getHistory(@PathVariable String conversationId) {
         try {
             WorkflowState state = workflowService.getWorkflowState(conversationId);
             if (state == null) return ResponseEntity.notFound().build();
 
-            ConversationHistory history = new ConversationHistory();
-            history.setConversationId(conversationId);
-            history.setMessages(state.getConversationHistory());
-            history.setStatus(state.getWorkflowStatus());
+            WorkflowHistoryResponse history = WorkflowHistoryResponse.builder()
+                    .conversationId(conversationId)
+                    .messages(state.getConversationHistory())
+                    .status(state.getWorkflowStatus())
+                    .build();
 
             return ResponseEntity.ok(history);
         } catch (Exception e) {
+            log.error("Failed to get conversation history", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
-    }
-
-    @DeleteMapping("/{conversationId}")
-    public ResponseEntity<Void> cancelWorkflow(@PathVariable String conversationId) {
-        try {
-            workflowService.cancelWorkflow(conversationId);
-            return ResponseEntity.noContent().build();
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
-    }
-
-    @Data
-    public static class StartWorkflowRequest {
-        private String requirement;
-        private String targetClass;
-        private String repoUrl;
-        private String baseBranch;
-        private String jiraUrl;
-        private String logsPasted;
-        private String userId;
-    }
-
-    @Data
-    public static class UserResponse {
-        private String response;
-        private String additionalContext;
-    }
-
-    @Data
-    public static class UploadResponse {
-        private boolean success;
-        private String message;
-        private List<FileUpload> files;
-        public UploadResponse(boolean s, String m, List<FileUpload> f) { success=s; message=m; files=f; }
-    }
-
-    @Data
-    public static class ConversationHistory {
-        private String conversationId;
-        private List<ChatMessage> messages;
-        private String status;
-    }
-
-    @Data
-    public static class WorkflowResponse {
-        private boolean success;
-        private String conversationId;
-        private String status;
-        private String currentAgent;
-        private String message;
-        private boolean awaitingUserInput;
-        private int progress;
-        private String error;
-
-        public static WorkflowResponse fromState(WorkflowState state) {
-            WorkflowResponse response = new WorkflowResponse();
-            response.setSuccess(true);
-            response.setConversationId(state.getConversationId());
-            response.setStatus(state.getWorkflowStatus());
-            response.setCurrentAgent(state.getCurrentAgent());
-
-            if (state.getLastAgentDecision() != null) {
-                response.setMessage(state.getLastAgentDecision().getMessage());
-                response.setAwaitingUserInput(
-                        state.getLastAgentDecision().getNextStep() ==
-                                com.purchasingpower.autoflow.workflow.state.AgentDecision.NextStep.ASK_DEV
-                );
-            }
-
-            response.setProgress(calculateProgress(state));
-            return response;
-        }
-
-        public static WorkflowResponse error(String msg) {
-            WorkflowResponse r = new WorkflowResponse();
-            r.setSuccess(false);
-            r.setError(msg);
-            return r;
-        }
-
-        private static int calculateProgress(WorkflowState state) {
-            Map<String, Integer> agentProgress = Map.ofEntries(
-                    entry("requirement_analyzer", 5),
-                    entry("log_analyzer", 10),
-                    entry("code_indexer", 20),
-                    entry("scope_discovery", 30),
-                    entry("context_builder", 40),
-                    entry("code_generator", 50),
-                    entry("build_validator", 65),
-                    entry("test_runner", 75),
-                    entry("pr_reviewer", 85),
-                    entry("readme_generator", 90),
-                    entry("pr_creator", 95)
-            );
-            return agentProgress.getOrDefault(state.getCurrentAgent(), 0);
         }
     }
 }

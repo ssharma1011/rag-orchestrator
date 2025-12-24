@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -16,7 +17,7 @@ import java.util.List;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class RequirementAnalysis {
+public class RequirementAnalysis implements Serializable {
 
     /**
      * Type of task: "bug_fix", "feature", "refactor", "test"

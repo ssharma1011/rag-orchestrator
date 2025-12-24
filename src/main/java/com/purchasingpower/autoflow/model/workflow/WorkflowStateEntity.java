@@ -1,4 +1,4 @@
-package com.purchasingpower.autoflow.model;
+package com.purchasingpower.autoflow.model.workflow;
 
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;

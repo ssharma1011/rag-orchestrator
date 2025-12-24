@@ -43,22 +43,22 @@ public class AutoFlowWorkflow {
         log.info("🚀 Initializing AutoFlow workflow graph...");
         StateGraph<WorkflowState> graph = new StateGraph<>(WorkflowState::new);
 
-        // Define Nodes
-        graph.addNode("requirement_analyzer", node_async(s -> executeAgent("RequirementAnalyzer", s, requirementAnalyzer::execute)));
-        graph.addNode("log_analyzer", node_async(s -> executeAgent("LogAnalyzer", s, logAnalyzer::execute)));
-        graph.addNode("code_indexer", node_async(s -> executeAgent("CodeIndexer", s, codeIndexer::execute)));
-        graph.addNode("scope_discovery", node_async(s -> executeAgent("ScopeDiscovery", s, scopeDiscovery::execute)));
-        graph.addNode("context_builder", node_async(s -> executeAgent("ContextBuilder", s, contextBuilder::execute)));
-        graph.addNode("code_generator", node_async(s -> executeAgent("CodeGenerator", s, codeGenerator::execute)));
-        graph.addNode("build_validator", node_async(s -> executeAgent("BuildValidator", s, buildValidator::execute)));
-        graph.addNode("test_runner", node_async(s -> executeAgent("TestRunner", s, testRunner::execute)));
-        graph.addNode("pr_reviewer", node_async(s -> executeAgent("PRReviewer", s, prReviewer::execute)));
-        graph.addNode("readme_generator", node_async(s -> executeAgent("ReadmeGenerator", s, readmeGenerator::execute)));
-        graph.addNode("pr_creator", node_async(s -> executeAgent("PRCreator", s, prCreator::execute)));
+        graph.addNode("requirement_analyzer", node_async(requirementAnalyzer::execute));
+        graph.addNode("log_analyzer", node_async(logAnalyzer::execute));
+        graph.addNode("code_indexer", node_async(codeIndexer::execute));
+        graph.addNode("scope_discovery", node_async(scopeDiscovery::execute));
+        graph.addNode("context_builder", node_async(contextBuilder::execute));
+        graph.addNode("code_generator", node_async(codeGenerator::execute));
+        graph.addNode("build_validator", node_async(buildValidator::execute));
+        graph.addNode("test_runner", node_async(testRunner::execute));
+        graph.addNode("pr_reviewer", node_async(prReviewer::execute));
+        graph.addNode("readme_generator", node_async(readmeGenerator::execute));
+        graph.addNode("pr_creator", node_async(prCreator::execute));
 
         graph.addNode("ask_developer", node_async(s -> {
-            s.setWorkflowStatus("PAUSED");
-            return s.toMap();
+            Map<String, Object> updates = new java.util.HashMap<>(s.toMap());
+            updates.put("workflowStatus", "PAUSED");
+            return updates;
         }));
 
         // Define Edges
@@ -99,60 +99,52 @@ public class AutoFlowWorkflow {
         graph.addEdge("readme_generator", "pr_creator");
         graph.addEdge("pr_creator", END);
 
+        graph.addEdge("ask_developer", END);
+
         this.compiledGraph = graph.compile();
     }
 
     public WorkflowState execute(WorkflowState initialState) {
         log.info("🚀 Starting workflow: {}", initialState.getConversationId());
-        initialState.setWorkflowStatus("RUNNING");
-        initialState.setBuildAttempt(0);
-        initialState.setReviewAttempt(0);
+
+        Map<String, Object> initialData = new java.util.HashMap<>(initialState.toMap());
+        initialData.put("workflowStatus", "RUNNING");
+        initialData.put("buildAttempt", 0);
+        initialData.put("reviewAttempt", 0);
 
         try {
-            Optional<WorkflowState> result = compiledGraph.invoke(initialState.toMap());
-
-            // If the Optional is empty, return original state, else return result
+            Optional<WorkflowState> result = compiledGraph.invoke(initialData);
             return result.orElse(initialState);
 
         } catch (Exception e) {
             log.error("Workflow execution failed", e);
-            initialState.setWorkflowStatus("FAILED");
-            initialState.setLastAgentDecision(AgentDecision.error(e.getMessage()));
-            return initialState;
-        }
-    }
-
-    private Map<String, Object> executeAgent(String name, WorkflowState state, java.util.function.Function<WorkflowState, AgentDecision> func) {
-        try {
-            log.info("📍 Executing: {}", name);
-            state.setCurrentAgent(name);
-            AgentDecision decision = func.apply(state);
-            state.setLastAgentDecision(decision);
-            return state.toMap();
-        } catch (Exception e) {
-            log.error("❌ {} failed", name, e);
-            state.setLastAgentDecision(AgentDecision.error(e.getMessage()));
-            return state.toMap();
+            Map<String, Object> errorData = new java.util.HashMap<>(initialData);
+            errorData.put("workflowStatus", "FAILED");
+            errorData.put("lastAgentDecision", AgentDecision.error(e.getMessage()));
+            return WorkflowState.fromMap(errorData);
         }
     }
 
     private boolean shouldPause(WorkflowState state) {
-        return state.getLastAgentDecision() != null && state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.ASK_DEV;
+        return state.getLastAgentDecision() != null &&
+                state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.ASK_DEV;
     }
 
     private String routeFromBuildValidator(WorkflowState state) {
-        if (state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.RETRY && state.getBuildAttempt() < 3) {
-            state.incrementBuildAttempt();
+        if (state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.RETRY &&
+                state.getBuildAttempt() < 3) {
             return "code_generator";
         }
-        return state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.PROCEED ? "test_runner" : "ask_developer";
+        return state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.PROCEED ?
+                "test_runner" : "ask_developer";
     }
 
     private String routeFromPRReviewer(WorkflowState state) {
-        if (state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.RETRY && state.getReviewAttempt() < 3) {
-            state.incrementReviewAttempt();
+        if (state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.RETRY &&
+                state.getReviewAttempt() < 3) {
             return "code_generator";
         }
-        return state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.PROCEED ? "readme_generator" : "ask_developer";
+        return state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.PROCEED ?
+                "readme_generator" : "ask_developer";
     }
 }

@@ -13,7 +13,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -29,48 +28,54 @@ public class ScopeDiscoveryAgent {
     private final PromptLibraryService promptLibrary;
     private final ObjectMapper objectMapper;
 
-    public AgentDecision execute(WorkflowState state) {
+    public Map<String, Object> execute(WorkflowState state) {
         log.info("🔍 Discovering scope for: {}", state.getRequirement());
 
         RequirementAnalysis req = state.getRequirementAnalysis();
         String repoName = extractRepoName(state.getRepoUrl());
 
         try {
-            // Step 1: Find candidate classes using KNOWLEDGE GRAPH
             List<GraphNode> candidates = findCandidateClasses(req, repoName);
 
             if (candidates.isEmpty()) {
-                return AgentDecision.askDev(
-                        "❌ **No Classes Found**\n\n" +
-                                "I couldn't find any classes matching:\n" +
-                                "- Domain: " + req.getDomain() + "\n" +
-                                "- Requirement: " + req.getSummary() + "\n\n" +
-                                "Please verify repo indexing."
-                );
+                Map<String, Object> updates = new HashMap<>(state.toMap());
+                updates.put("lastAgentDecision", AgentDecision.askDev(
+                    "❌ **No Classes Found**\n\n" +
+                    "I couldn't find any classes matching:\n" +
+                    "- Domain: " + req.getDomain() + "\n" +
+                    "- Requirement: " + req.getSummary() + "\n\n" +
+                    "Please verify repo indexing."
+                ));
+                return updates;
             }
 
-            // Step 2: LLM decides final scope
             ScopeProposal proposal = analyzeScope(req, candidates, repoName);
-            state.setScopeProposal(proposal);
+            
+            Map<String, Object> updates = new HashMap<>(state.toMap());
+            updates.put("scopeProposal", proposal);
 
-            // Step 3: Validate limits
             int totalFiles = proposal.getTotalFileCount();
             if (totalFiles > MAX_FILES) {
-                return AgentDecision.askDev("⚠️ **Scope Too Large**\nProposed " + totalFiles + " files. Limit is " + MAX_FILES + ".");
+                updates.put("lastAgentDecision", AgentDecision.askDev(
+                    "⚠️ **Scope Too Large**\nProposed " + totalFiles + " files. Limit is " + MAX_FILES + "."
+                ));
+                return updates;
             }
 
-            return AgentDecision.askDev(proposal.formatForApproval());
+            updates.put("lastAgentDecision", AgentDecision.askDev(proposal.formatForApproval()));
+            return updates;
 
         } catch (Exception e) {
             log.error("Scope discovery failed", e);
-            return AgentDecision.error("Failed to discover scope: " + e.getMessage());
+            Map<String, Object> updates = new HashMap<>(state.toMap());
+            updates.put("lastAgentDecision", AgentDecision.error("Failed to discover scope: " + e.getMessage()));
+            return updates;
         }
     }
 
     private List<GraphNode> findCandidateClasses(RequirementAnalysis req, String repoName) {
         Set<GraphNode> candidates = new HashSet<>();
 
-        // Strategy 1: Domain Search
         if (req.getDomain() != null && !req.getDomain().isEmpty()) {
             List<GraphNode> domainClasses = graphRepo.findByRepoName(repoName).stream()
                     .filter(node -> req.getDomain().equalsIgnoreCase(node.getDomain()))
@@ -78,22 +83,18 @@ public class ScopeDiscoveryAgent {
             candidates.addAll(domainClasses);
         }
 
-        // Strategy 2: Semantic Search (Pinecone)
         List<Double> requirementEmbedding = geminiClient.createEmbedding(req.getSummary());
         List<PineconeRetriever.CodeContext> semanticMatches =
                 pineconeRetriever.findRelevantCodeStructured(requirementEmbedding, repoName);
 
         for (PineconeRetriever.CodeContext match : semanticMatches) {
-            // FIX: Use findByNodeId (String) instead of findById (Long)
             graphRepo.findByNodeId(match.id()).ifPresent(candidates::add);
         }
 
-        // Strategy 3: Dependency Expansion
         Set<GraphNode> expanded = new HashSet<>(candidates);
         for (GraphNode candidate : candidates) {
             List<String> deps = graphTraversal.findDirectDependencies(candidate.getNodeId(), repoName);
             for (String depId : deps) {
-                // FIX: Use findByNodeId
                 graphRepo.findByNodeId(depId).ifPresent(dep -> {
                     if (req.getDomain() != null && req.getDomain().equals(dep.getDomain())) {
                         expanded.add(dep);

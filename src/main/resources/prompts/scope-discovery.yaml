@@ -3,7 +3,7 @@ version: v1
 model: gemini-1.5-pro
 temperature: 0.2
 
-system_prompt: |
+systemPrompt: |
   You are a Senior Software Architect analyzing code structure.
   Your job: Determine which files need modification for a given task.
   
@@ -14,7 +14,7 @@ system_prompt: |
   - Maximum 7 files allowed
   - Don't hallucinate, be 100% sure
 
-user_prompt: |
+userPrompt: |
   Task: {{requirement}}
   Domain: {{domain}}
   
@@ -40,34 +40,34 @@ user_prompt: |
     "risks": ["Potential issue 1"]
   }
 
-response_schema:
-  type: object
-  required:
-    - filesToModify
-    - filesToCreate
-    - testsToUpdate
-    - reasoning
-    - estimatedComplexity
-  properties:
-    filesToModify:
-      type: array
-      items:
-        type: string
-    filesToCreate:
-      type: array
-      items:
-        type: string
-    testsToUpdate:
-      type: array
-      items:
-        type: string
-    reasoning:
-      type: string
-    estimatedComplexity:
-      type: integer
-      minimum: 1
-      maximum: 10
-    risks:
-      type: array
-      items:
-        type: string
+#response_schema:
+#  type: object
+#  required:
+#    - filesToModify
+#    - filesToCreate
+#    - testsToUpdate
+#    - reasoning
+#    - estimatedComplexity
+#  properties:
+#    filesToModify:
+#      type: array
+#      items:
+#        type: string
+#    filesToCreate:
+#      type: array
+#      items:
+#        type: string
+#    testsToUpdate:
+#      type: array
+#      items:
+#        type: string
+#    reasoning:
+#      type: string
+#    estimatedComplexity:
+#      type: integer
+#      minimum: 1
+#      maximum: 10
+#    risks:
+#      type: array
+#      items:
+#        type: string

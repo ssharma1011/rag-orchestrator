@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.io.Serializable;
+
 /**
  * Decision made by an agent about what to do next.
  * Used by LangGraph4J for conditional routing.
@@ -13,7 +15,7 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class AgentDecision {
+public class AgentDecision implements Serializable {
 
     /**
      * Where to go next

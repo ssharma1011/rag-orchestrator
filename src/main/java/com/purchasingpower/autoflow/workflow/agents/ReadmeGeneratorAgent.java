@@ -11,21 +11,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-/**
- * AGENT 9: README Generator
- *
- * Purpose: Generate comprehensive PR description
- *
- * USES PROMPT LIBRARY (no hardcoded prompts!)
- *
- * Includes:
- * - Summary
- * - Root cause (for bugs)
- * - Changes made
- * - Impact assessment
- * - Testing strategy
- * - Rollback plan
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -34,100 +19,46 @@ public class ReadmeGeneratorAgent {
     private final GeminiClient geminiClient;
     private final PromptLibraryService promptLibrary;
 
-    public AgentDecision execute(WorkflowState state) {
-        log.info("📝 Generating PR README...");
+    public Map<String, Object> execute(WorkflowState state) {
+        log.info("📝 Generating PR description...");
 
         try {
-            String readme = generateReadmeWithLLM(state);
-            state.setPrDescription(readme);
+            String prDescription = generateDescription(state);
+            
+            Map<String, Object> updates = new HashMap<>(state.toMap());
+            updates.put("prDescription", prDescription);
 
-            log.info("✅ PR README generated ({} chars)", readme.length());
-
-            return AgentDecision.proceed("README generated, creating PR");
+            log.info("✅ PR description generated ({} characters)", prDescription.length());
+            
+            updates.put("lastAgentDecision", AgentDecision.proceed("PR description ready"));
+            return updates;
 
         } catch (Exception e) {
-            log.error("README generation failed", e);
-
-            // Create fallback README
-            String fallback = createFallbackReadme(state);
-            state.setPrDescription(fallback);
-
-            return AgentDecision.proceed("Using fallback README");
+            log.error("Failed to generate PR description", e);
+            Map<String, Object> updates = new HashMap<>(state.toMap());
+            updates.put("lastAgentDecision", AgentDecision.error("PR description generation failed: " + e.getMessage()));
+            return updates;
         }
     }
 
-    /**
-     * Generate README with LLM using PROMPT LIBRARY
-     */
-    private String generateReadmeWithLLM(WorkflowState state) {
-        // Prepare files modified list
-        var filesModified = state.getGeneratedCode().getEdits().stream()
-                .map(edit -> Map.of("path", (Object) edit.getPath()))
-                .toList();
+    private String generateDescription(WorkflowState state) {
+        // FIX: Use edit.getPath() and edit.getOp()
+        String filesChanged = state.getGeneratedCode().getEdits().stream()
+                .map(e -> "- " + e.getPath() + " (" + e.getOp() + ")")
+                .collect(Collectors.joining("\n"));
 
-        // Prepare files created list
-        var filesCreated = state.getScopeProposal().getFilesToCreate().stream()
-                .map(action -> Map.of("path", (Object) action.getFilePath()))
-                .toList();
-
-        // Prepare variables for prompt template
         Map<String, Object> variables = new HashMap<>();
         variables.put("requirement", state.getRequirement());
         variables.put("taskType", state.getRequirementAnalysis().getTaskType());
-        variables.put("filesModified", filesModified);
-        variables.put("filesCreated", filesCreated);
-        variables.put("explanation", state.getGeneratedCode().getExplanation());
-
-        if (state.getLogAnalysis() != null) {
-            variables.put("logAnalysis", Map.of(
-                    "rootCauseHypothesis", state.getLogAnalysis().getRootCauseHypothesis()
-            ));
-        }
-
-        if (state.getTestResult() != null) {
-            variables.put("testsPassed", state.getTestResult().getTestsPassed());
-            variables.put("coverageDelta", state.getTestResult().getCoverageDelta());
-        }
-
+        variables.put("filesChanged", filesChanged);
+        variables.put("buildPassed", state.getBuildResult().isSuccess());
+        variables.put("testsPassed", state.getTestResult().isAllTestsPassed());  // FIX
+        
         if (state.getCodeReview() != null) {
             variables.put("qualityScore", state.getCodeReview().getQualityScore());
         }
 
-        // Render prompt using PROMPT LIBRARY
         String prompt = promptLibrary.render("readme-generator", variables);
-
-        // Call LLM
         return geminiClient.generateText(prompt);
-    }
-
-    /**
-     * Fallback README if LLM fails
-     */
-    private String createFallbackReadme(WorkflowState state) {
-        return String.format("""
-            # %s
-            
-            ## Summary
-            %s
-            
-            ## Changes Made
-            - Modified %d files
-            - Created %d files
-            - Added/updated %d tests
-            
-            ## Testing
-            %s
-            
-            ---
-            _Generated by AutoFlow AI_
-            """,
-                state.getRequirement(),
-                state.getRequirementAnalysis().getSummary(),
-                state.getGeneratedCode().getEdits().size(),
-                state.getScopeProposal().getFilesToCreate().size(),
-                state.getGeneratedCode().getTestsAdded().size(),
-                state.getTestResult() != null && state.getTestResult().isAllTestsPassed() ?
-                        "All tests passed ✅" : "Some tests may need attention"
-        );
     }
 }

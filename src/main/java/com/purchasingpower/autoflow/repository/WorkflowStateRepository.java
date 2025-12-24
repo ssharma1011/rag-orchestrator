@@ -1,6 +1,6 @@
 package com.purchasingpower.autoflow.repository;
 
-import com.purchasingpower.autoflow.model.WorkflowStateEntity;
+import com.purchasingpower.autoflow.model.workflow.WorkflowStateEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;

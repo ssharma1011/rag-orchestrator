@@ -1,9 +1,10 @@
 package com.purchasingpower.autoflow.service.impl;
 
-import com.purchasingpower.autoflow.model.WorkflowStateEntity;
+import com.purchasingpower.autoflow.model.workflow.WorkflowStateEntity;
 import com.purchasingpower.autoflow.repository.WorkflowStateRepository;
 import com.purchasingpower.autoflow.service.WorkflowExecutionService;
 import com.purchasingpower.autoflow.workflow.AutoFlowWorkflow;
+import com.purchasingpower.autoflow.workflow.state.AgentDecision;
 import com.purchasingpower.autoflow.workflow.state.WorkflowState;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -11,17 +12,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Implementation of WorkflowExecutionService.
+ * FIXED: No longer calls setters on WorkflowState after LangGraph4j processing.
  *
- * Manages workflow execution using:
- * - AutoFlowWorkflow (LangGraph4j orchestration)
- * - WorkflowStateRepository (persistence)
- * - In-memory cache for active workflows
+ * Uses Map manipulation instead to avoid UnsupportedOperationException.
  */
 @Slf4j
 @Service
@@ -32,7 +31,6 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
     private final WorkflowStateRepository stateRepository;
     private final ObjectMapper objectMapper;
 
-    // In-memory cache of active workflows
     private final ConcurrentHashMap<String, WorkflowState> activeWorkflows = new ConcurrentHashMap<>();
 
     @Override
@@ -42,23 +40,27 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
         try {
             // Generate conversation ID if not present
             if (initialState.getConversationId() == null) {
-                String conversationId = UUID.randomUUID().toString();
-                initialState.setConversationId(conversationId);
+                // FIX: Create new state with ID using Map
+                Map<String, Object> data = new HashMap<>(initialState.toMap());
+                data.put("conversationId", UUID.randomUUID().toString());
+                initialState = WorkflowState.fromMap(data);
             }
 
-            // Set initial status
-            initialState.setWorkflowStatus("RUNNING");
+            // FIX: Create new state with RUNNING status
+            Map<String, Object> data = new HashMap<>(initialState.toMap());
+            data.put("workflowStatus", "RUNNING");
+            WorkflowState runningState = WorkflowState.fromMap(data);
 
             // Save initial state
-            saveWorkflowState(initialState);
+            saveWorkflowState(runningState);
 
             // Cache it
-            activeWorkflows.put(initialState.getConversationId(), initialState);
+            activeWorkflows.put(runningState.getConversationId(), runningState);
 
             // Execute workflow asynchronously
-            executeWorkflowAsync(initialState);
+            executeWorkflowAsync(runningState);
 
-            return initialState;
+            return runningState;
 
         } catch (Exception e) {
             log.error("Failed to start workflow", e);
@@ -71,19 +73,21 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
         log.info("Resuming workflow: {}", state.getConversationId());
 
         try {
-            // Update status to running
-            state.setWorkflowStatus("RUNNING");
+            // FIX: Create new state with RUNNING status (don't modify original)
+            Map<String, Object> data = new HashMap<>(state.toMap());
+            data.put("workflowStatus", "RUNNING");
+            WorkflowState runningState = WorkflowState.fromMap(data);
 
             // Save state
-            saveWorkflowState(state);
+            saveWorkflowState(runningState);
 
             // Update cache
-            activeWorkflows.put(state.getConversationId(), state);
+            activeWorkflows.put(runningState.getConversationId(), runningState);
 
             // Continue execution asynchronously
-            executeWorkflowAsync(state);
+            executeWorkflowAsync(runningState);
 
-            return state;
+            return runningState;
 
         } catch (Exception e) {
             log.error("Failed to resume workflow", e);
@@ -110,12 +114,13 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
                 return null;
             }
 
-            // Deserialize state from JSON
-
-            return objectMapper.readValue(
+            @SuppressWarnings("unchecked")
+            Map<String, Object> stateMap = objectMapper.readValue(
                     entity.getStateJson(),
-                    WorkflowState.class
+                    Map.class
             );
+
+            return WorkflowState.fromMap(stateMap);
 
         } catch (Exception e) {
             log.error("Failed to load workflow state", e);
@@ -130,8 +135,12 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
         try {
             WorkflowState state = getWorkflowState(conversationId);
             if (state != null) {
-                state.setWorkflowStatus("CANCELLED");
-                saveWorkflowState(state);
+                // FIX: Create new state with CANCELLED status
+                Map<String, Object> data = new HashMap<>(state.toMap());
+                data.put("workflowStatus", "CANCELLED");
+                WorkflowState cancelledState = WorkflowState.fromMap(data);
+
+                saveWorkflowState(cancelledState);
                 activeWorkflows.remove(conversationId);
             }
 
@@ -141,9 +150,6 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
         }
     }
 
-    /**
-     * Execute workflow asynchronously.
-     */
     @Async
     protected void executeWorkflowAsync(WorkflowState state) {
         try {
@@ -165,16 +171,17 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
         } catch (Exception e) {
             log.error("Workflow execution failed: {}", state.getConversationId(), e);
 
-            // Mark as failed
-            state.setWorkflowStatus("FAILED");
-            saveWorkflowState(state);
+            // FIX: Create new FAILED state (don't modify original)
+            Map<String, Object> data = new HashMap<>(state.toMap());
+            data.put("workflowStatus", "FAILED");
+            data.put("lastAgentDecision", AgentDecision.error(e.getMessage()));
+            WorkflowState failedState = WorkflowState.fromMap(data);
+
+            saveWorkflowState(failedState);
             activeWorkflows.remove(state.getConversationId());
         }
     }
 
-    /**
-     * Save workflow state to database.
-     */
     private void saveWorkflowState(WorkflowState state) {
         try {
             // Serialize state to JSON
@@ -183,7 +190,11 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
             // Find existing entity or create new
             WorkflowStateEntity entity = stateRepository
                     .findByConversationId(state.getConversationId())
-                    .orElse(new WorkflowStateEntity());
+                    .orElse(null);
+
+            if (entity == null) {
+                entity = new WorkflowStateEntity();
+            }
 
             // Update entity
             entity.setConversationId(state.getConversationId());

@@ -575,6 +575,4 @@ public class AstParserServiceImpl implements AstParserService {
         return concepts.stream().distinct().collect(Collectors.toList());
     }
 
-// Add this call in buildClassMetadata() method, after existing metadata extraction:
-// inferKnowledgeGraph(classMetadata, type);
 }

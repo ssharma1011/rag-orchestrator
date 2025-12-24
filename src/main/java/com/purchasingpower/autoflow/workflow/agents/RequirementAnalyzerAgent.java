@@ -8,20 +8,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.HashMap;
 import java.util.Map;
 
-/**
- * AGENT 1: Requirement Analyzer
- *
- * Purpose: Understand what the developer wants
- *
- * Key validations:
- * - Is requirement clear?
- * - Can we extract domain?
- * - Do we need clarification?
- *
- * Decision: PROCEED or ASK_DEV
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -31,42 +20,46 @@ public class RequirementAnalyzerAgent {
     private final PromptLibraryService promptLibrary;
     private final ObjectMapper objectMapper;
 
-    public AgentDecision execute(WorkflowState state) {
+    public Map<String, Object> execute(WorkflowState state) {
         log.info("🔍 Analyzing requirement: {}", state.getRequirement());
 
-        // Parse requirement with LLM (using prompt library!)
-        RequirementAnalysis analysis = analyzeWithLLM(state);
-        state.setRequirementAnalysis(analysis);
+        try {
+            RequirementAnalysis analysis = analyzeWithLLM(state);
 
-        // Check confidence
-        if (analysis.getConfidence() < 0.7) {
-            return AgentDecision.askDev(
-                    "⚠️ **Unclear Requirement**\n\n" +
-                            "I'm not confident I understand (confidence: " +
-                            String.format("%.0f%%", analysis.getConfidence() * 100) + ").\n\n" +
-                            "**Questions:**\n" +
-                            String.join("\n", analysis.getQuestions())
-            );
+            Map<String, Object> updates = new HashMap<>(state.toMap());
+            updates.put("requirementAnalysis", analysis);
+
+            if (analysis.getConfidence() < 0.7) {
+                updates.put("lastAgentDecision", AgentDecision.askDev(
+                        "⚠️ **Unclear Requirement**\n\n" +
+                                "Confidence: " + String.format("%.0f%%", analysis.getConfidence() * 100) + "\n\n" +
+                                "**Questions:**\n" + String.join("\n", analysis.getQuestions())
+                ));
+                return updates;
+            }
+
+            if (!analysis.getQuestions().isEmpty()) {
+                updates.put("lastAgentDecision", AgentDecision.askDev(
+                        "📋 **Need Clarification**\n\n" + String.join("\n", analysis.getQuestions())
+                ));
+                return updates;
+            }
+
+            log.info("✅ Requirement analyzed. Type: {}, Domain: {}, Confidence: {}",
+                    analysis.getTaskType(), analysis.getDomain(), analysis.getConfidence());
+
+            updates.put("lastAgentDecision", AgentDecision.proceed("Requirement clear, proceeding to code indexing"));
+            return updates;
+
+        } catch (Exception e) {
+            log.error("Requirement analysis failed", e);
+            Map<String, Object> updates = new HashMap<>(state.toMap());
+            updates.put("lastAgentDecision", AgentDecision.error(e.getMessage()));
+            return updates;
         }
-
-        // Check if we have questions
-        if (!analysis.getQuestions().isEmpty()) {
-            return AgentDecision.askDev(
-                    "📋 **Need Clarification**\n\n" +
-                            String.join("\n", analysis.getQuestions())
-            );
-        }
-
-        log.info("✅ Requirement analyzed. Type: {}, Domain: {}, Confidence: {}",
-                analysis.getTaskType(),
-                analysis.getDomain(),
-                analysis.getConfidence());
-
-        return AgentDecision.proceed("Requirement clear, proceeding to code indexing");
     }
 
     private RequirementAnalysis analyzeWithLLM(WorkflowState state) {
-        // Render prompt from library
         String prompt = promptLibrary.render("requirement-analyzer", Map.of(
                 "requirement", state.getRequirement(),
                 "targetClass", state.getTargetClass() != null ? state.getTargetClass() : "",
@@ -74,16 +67,13 @@ public class RequirementAnalyzerAgent {
         ));
 
         try {
-            // Call LLM
             String jsonResponse = geminiClient.generateText(prompt);
 
-            // Parse JSON response
-            return objectMapper.readValue(jsonResponse, RequirementAnalysis.class);
+            String cleanJson = getTrimmedString(jsonResponse);
 
+            return objectMapper.readValue(cleanJson, RequirementAnalysis.class);
         } catch (Exception e) {
             log.error("Failed to analyze requirement with LLM", e);
-
-            // Fallback: Simple analysis
             return RequirementAnalysis.builder()
                     .taskType("unknown")
                     .domain("unknown")
@@ -91,5 +81,20 @@ public class RequirementAnalyzerAgent {
                     .confidence(0.5)
                     .build();
         }
+    }
+
+    private static String getTrimmedString(String jsonResponse) {
+        String cleanJson = jsonResponse.trim();
+        if (cleanJson.startsWith("```json")) {
+            cleanJson = cleanJson.substring(7); // Remove ```json
+        }
+        if (cleanJson.startsWith("```")) {
+            cleanJson = cleanJson.substring(3); // Remove ```
+        }
+        if (cleanJson.endsWith("```")) {
+            cleanJson = cleanJson.substring(0, cleanJson.length() - 3); // Remove trailing ```
+        }
+        cleanJson = cleanJson.trim();
+        return cleanJson;
     }
 }

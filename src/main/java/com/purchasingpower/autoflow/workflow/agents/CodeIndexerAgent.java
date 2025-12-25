@@ -111,9 +111,9 @@ public class CodeIndexerAgent {
                 log.info("📚 Documentation request - skipping build validation (saves ~60 seconds)");
                 baseline = BuildResult.builder()
                         .success(true)
-                        .duration(0L)
-                        .output("Build skipped for documentation request")
-                        .errors("")
+                        .durationMs(0L)
+                        .buildLogs("Build skipped for documentation request")
+                        .compilationErrors(new ArrayList<>())
                         .build();
             } else {
                 log.info("🔨 Running baseline build...");

@@ -4,6 +4,36 @@
 -- Purpose: Add LLM call metrics tracking with proper Oracle sequence
 -- ================================================================
 
+-- ================================================================
+-- CLEANUP: Drop existing objects if they exist
+-- ================================================================
+
+-- Drop table (CASCADE CONSTRAINTS removes foreign keys if any)
+BEGIN
+   EXECUTE IMMEDIATE 'DROP TABLE llm_call_metrics CASCADE CONSTRAINTS';
+EXCEPTION
+   WHEN OTHERS THEN
+      IF SQLCODE != -942 THEN -- -942 = table does not exist
+         RAISE;
+      END IF;
+END;
+/
+
+-- Drop sequence
+BEGIN
+   EXECUTE IMMEDIATE 'DROP SEQUENCE llm_metrics_seq';
+EXCEPTION
+   WHEN OTHERS THEN
+      IF SQLCODE != -2289 THEN -- -2289 = sequence does not exist
+         RAISE;
+      END IF;
+END;
+/
+
+-- ================================================================
+-- CREATE NEW OBJECTS
+-- ================================================================
+
 -- Create sequence for ID generation
 CREATE SEQUENCE llm_metrics_seq
     START WITH 1

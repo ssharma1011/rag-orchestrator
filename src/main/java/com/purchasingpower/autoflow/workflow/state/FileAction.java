@@ -37,6 +37,19 @@ public class FileAction implements Serializable {
      */
     private String className;
 
+    /**
+     * Target methods within the class (for precise modification)
+     * Example: ["generateText", "createEmbedding"]
+     * If null or empty, the entire class needs modification
+     */
+    private java.util.List<String> targetMethods;
+
+    /**
+     * Method-level reasoning (optional)
+     * Key: method name, Value: why this method needs modification
+     */
+    private java.util.Map<String, String> methodReasons;
+
     public enum ActionType {
         MODIFY,   // Change existing file
         CREATE,   // Create new file

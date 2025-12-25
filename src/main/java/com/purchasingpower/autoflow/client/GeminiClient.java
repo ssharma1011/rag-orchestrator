@@ -125,23 +125,12 @@ public class GeminiClient {
         }
     }
 
+    /**
+     * Generate text with full logging and metrics.
+     * Delegates to callChatApi for consistent instrumentation.
+     */
     public String generateText(String prompt) {
-        String model = props.getGemini().getChatModel();
-        String url = getApiUrl(model, "generateContent");
-        Map<String, Object> body = Map.of(
-                "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
-                "generationConfig", Map.of("temperature", 0.7));
-
-        try {
-            String json = geminiWebClient.post().uri(url).bodyValue(body)
-                    .retrieve().bodyToMono(String.class)
-                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(10)).filter(this::isRetryable)).block();
-            JsonNode root = objectMapper.readTree(json);
-            return root.path("candidates").get(0).path("content").path("parts").get(0).path("text").asText();
-        } catch (Exception e) {
-            log.error("Text generation failed", e);
-            return "Error: " + e.getMessage();
-        }
+        return callChatApi(prompt, "generateText", null);
     }
 
     private boolean isRetryable(Throwable ex) {
@@ -176,8 +165,13 @@ public class GeminiClient {
      * Overload with conversation ID for better metrics tracking
      */
     public String callChatApi(String prompt, String agentName, String conversationId) {
-        log.info("═══ GEMINI API CALL [{}] ═══", agentName);
-        log.debug("Prompt length: {} chars", prompt.length());
+        log.info("═══════════════════════════════════════════════════════════");
+        log.info("📤 GEMINI API CALL [{}]", agentName);
+        log.info("═══════════════════════════════════════════════════════════");
+        log.info("Call ID: {}", UUID.randomUUID().toString().substring(0, 8));
+        log.info("Conversation ID: {}", conversationId != null ? conversationId : "N/A");
+        log.info("Prompt length: {} chars", prompt.length());
+        log.info("\n📝 PROMPT:\n{}\n", truncateForLog(prompt, 2000));
 
         String callId = UUID.randomUUID().toString();
         String model = props.getGemini().getChatModel();
@@ -236,11 +230,16 @@ public class GeminiClient {
             double cost = metrics.calculateCost();
             double tokensPerSec = metrics.calculateTokensPerSecond();
 
-            log.info("✅ LLM Response [{}]", agentName);
-            log.info("   Latency: {}ms", latency);
-            log.info("   Tokens: {} input + {} output = {} total", inputTokens, outputTokens, inputTokens + outputTokens);
-            log.info("   Cost: ${}", String.format("%.4f", cost));
-            log.info("   Throughput: {:.1f} tokens/sec", tokensPerSec);
+            log.info("═══════════════════════════════════════════════════════════");
+            log.info("📥 GEMINI API RESPONSE [{}]", agentName);
+            log.info("═══════════════════════════════════════════════════════════");
+            log.info("✅ Status: SUCCESS");
+            log.info("⏱️  Latency: {}ms", latency);
+            log.info("🎯 Tokens: {} input + {} output = {} total", inputTokens, outputTokens, inputTokens + outputTokens);
+            log.info("💰 Cost: ${}", String.format("%.4f", cost));
+            log.info("⚡ Throughput: {} tokens/sec", String.format("%.1f", tokensPerSec));
+            log.info("\n📝 RESPONSE:\n{}\n", truncateForLog(response, 2000));
+            log.info("═══════════════════════════════════════════════════════════\n");
 
             // Record metrics (async, non-blocking)
             if (llmMetricsService != null) {
@@ -284,6 +283,20 @@ public class GeminiClient {
 
             throw new RuntimeException("Gemini API call failed for agent: " + agentName, e);
         }
+    }
+
+    /**
+     * Truncate long strings for logging (to avoid massive log files).
+     * Shows first N characters + ellipsis if truncated.
+     */
+    private String truncateForLog(String text, int maxLength) {
+        if (text == null) {
+            return "(null)";
+        }
+        if (text.length() <= maxLength) {
+            return text;
+        }
+        return text.substring(0, maxLength) + "\n... [TRUNCATED - " + (text.length() - maxLength) + " more chars]";
     }
 
 }

@@ -73,8 +73,15 @@ public class ScopeDiscoveryAgent {
         }
     }
 
+    // Track method-level matches from Pinecone
+    // Key: className, Value: List of (methodName, score, content)
+    private final Map<String, List<MethodMatch>> methodMatches = new HashMap<>();
+
+    private record MethodMatch(String methodName, float score, String content, String chunkType) {}
+
     private List<GraphNode> findCandidateClasses(RequirementAnalysis req, String repoName) {
         Set<GraphNode> candidates = new HashSet<>();
+        methodMatches.clear(); // Reset for each execution
 
         log.info("════════════════════════════════════════════════════════════");
         log.info("🔍 SCOPE DISCOVERY - Finding Candidate Classes");
@@ -133,18 +140,22 @@ public class ScopeDiscoveryAgent {
             }
         }
 
-        // CRITICAL FILTER: Only use high-quality matches (score >= 0.7)
-        // This prevents irrelevant classes from polluting the scope
-        final double MIN_RELEVANCE_SCORE = 0.70;
+        // CRITICAL FILTER: Use adaptive threshold based on score distribution
+        // This prevents irrelevant classes while adapting to different codebases
         final int MAX_CLASSES = 3;  // Limit to top 3 most relevant classes
+        final int MAX_CHUNKS = 10;   // Process max 10 chunks
+
+        // Calculate adaptive threshold using score gap analysis
+        double adaptiveThreshold = calculateAdaptiveThreshold(semanticMatches);
 
         List<PineconeRetriever.CodeContext> filteredMatches = semanticMatches.stream()
-                .filter(m -> m.score() >= MIN_RELEVANCE_SCORE)
-                .limit(10)  // Process max 10 chunks (might map to fewer classes)
+                .filter(m -> m.score() >= adaptiveThreshold)
+                .limit(MAX_CHUNKS)
                 .toList();
 
-        log.info("   🔍 Filtered to {} high-relevance matches (score >= {})",
-                filteredMatches.size(), MIN_RELEVANCE_SCORE);
+        log.info("   🔍 Adaptive threshold: {:.3f} (analyzed {} matches)",
+                adaptiveThreshold, semanticMatches.size());
+        log.info("   🔍 Filtered to {} high-relevance matches", filteredMatches.size());
 
         int pineconeMatchesFound = 0;
         Set<String> processedClasses = new HashSet<>();  // Track unique classes
@@ -152,13 +163,20 @@ public class ScopeDiscoveryAgent {
         for (PineconeRetriever.CodeContext match : filteredMatches) {
             // Pinecone stores METHOD/FIELD chunks with IDs like:
             // "repo:com.package.ClassName.methodName"
-            // Neo4j stores CLASS nodes, so we need to extract the class name
+            // Use CodeContext fields directly instead of parsing ID
 
-            String className = extractClassNameFromChunkId(match.id());
+            String className = match.className();  // Already extracted by PineconeRetriever
+            String methodName = match.methodName();  // Method name if this is a method chunk
+            String chunkType = match.chunkType();     // METHOD, FIELD, CLASS, etc.
 
             // Skip if we already processed this class
             if (className != null && processedClasses.contains(className)) {
-                log.debug("   ⏭️  Skipping duplicate class: {}", className);
+                // But still track the method if it's new
+                if (methodName != null && !methodName.isEmpty()) {
+                    methodMatches.computeIfAbsent(className, k -> new ArrayList<>())
+                            .add(new MethodMatch(methodName, match.score(), match.content(), chunkType));
+                    log.debug("   📌 Tracked additional method '{}' for class '{}'", methodName, className);
+                }
                 continue;
             }
 
@@ -181,7 +199,16 @@ public class ScopeDiscoveryAgent {
                     candidates.addAll(nodes);
                     processedClasses.add(className);  // Mark as processed
                     pineconeMatchesFound += nodes.size();
-                    log.info("   ✅ Added class '{}' (score: {:.2f})", simpleClassName, match.score());
+
+                    // CRITICAL: Track method-level information
+                    if (methodName != null && !methodName.isEmpty()) {
+                        methodMatches.computeIfAbsent(className, k -> new ArrayList<>())
+                                .add(new MethodMatch(methodName, match.score(), match.content(), chunkType));
+                        log.info("   ✅ Added class '{}' with target method '{}' (score: {:.2f})",
+                                simpleClassName, methodName, match.score());
+                    } else {
+                        log.info("   ✅ Added class '{}' (score: {:.2f})", simpleClassName, match.score());
+                    }
                 } else {
                     log.debug("   ⚠️ No Neo4j nodes found for class '{}'", simpleClassName);
                 }
@@ -232,12 +259,38 @@ public class ScopeDiscoveryAgent {
 
     private ScopeProposal analyzeScope(RequirementAnalysis req, List<GraphNode> candidates, String repoName) {
         List<Map<String, Object>> candidateData = candidates.stream()
-                .map(node -> Map.of(
-                        "className", (Object) node.getSimpleName(),
-                        "filePath", node.getFilePath() != null ? node.getFilePath() : "",
-                        "purpose", node.getSummary() != null ? node.getSummary() : "",
-                        "dependencies", node.getDomain() != null ? node.getDomain() : ""
-                ))
+                .map(node -> {
+                    Map<String, Object> data = new HashMap<>();
+                    data.put("className", node.getSimpleName());
+                    data.put("filePath", node.getFilePath() != null ? node.getFilePath() : "");
+                    data.put("purpose", node.getSummary() != null ? node.getSummary() : "");
+                    data.put("dependencies", node.getDomain() != null ? node.getDomain() : "");
+
+                    // CRITICAL: Include method-level matches if available
+                    String fqn = node.getFullyQualifiedName();
+                    if (methodMatches.containsKey(fqn)) {
+                        List<MethodMatch> methods = methodMatches.get(fqn);
+                        List<Map<String, Object>> methodData = methods.stream()
+                                .map(m -> {
+                                    Map<String, Object> md = new HashMap<>();
+                                    md.put("name", m.methodName());
+                                    md.put("score", String.format("%.2f", m.score()));
+                                    md.put("type", m.chunkType());
+                                    // Include a snippet of the method content
+                                    String snippet = m.content().length() > 200
+                                            ? m.content().substring(0, 200) + "..."
+                                            : m.content();
+                                    md.put("snippet", snippet);
+                                    return md;
+                                })
+                                .toList();
+                        data.put("targetMethods", methodData);
+                        log.info("   🎯 Including {} target methods for class '{}'",
+                                methodData.size(), node.getSimpleName());
+                    }
+
+                    return data;
+                })
                 .toList();
 
         String prompt = promptLibrary.render("scope-discovery", Map.of(
@@ -246,11 +299,19 @@ public class ScopeDiscoveryAgent {
                 "candidates", candidateData
         ));
 
+        log.info("\n📤 SENDING TO LLM:");
+        log.info("   Requirement: {}", req.getSummary());
+        log.info("   Candidates: {} classes", candidateData.size());
+        log.info("   With method-level targeting: {}",
+                methodMatches.isEmpty() ? "No" : "Yes (" + methodMatches.size() + " classes)");
+
         try {
-            String jsonResponse = geminiClient.generateText(prompt);
+            // Use instrumented call with agent name for proper logging
+            String jsonResponse = geminiClient.callChatApi(prompt, "ScopeDiscoveryAgent", null);
             ScopeProposalDTO dto = objectMapper.readValue(jsonResponse, ScopeProposalDTO.class);
             return convertToScopeProposal(dto, candidates);
         } catch (Exception e) {
+            log.error("LLM scope analysis failed, using fallback", e);
             return createFallbackProposal(candidates);
         }
     }
@@ -265,9 +326,24 @@ public class ScopeDiscoveryAgent {
         for (String path : dto.filesToModify) {
             GraphNode node = findNodeByPath(path, candidates);
             if (node != null) {
+                // CRITICAL: Populate target methods from Pinecone matches
+                List<String> targetMethods = null;
+                String fqn = node.getFullyQualifiedName();
+                if (methodMatches.containsKey(fqn)) {
+                    targetMethods = methodMatches.get(fqn).stream()
+                            .map(MethodMatch::methodName)
+                            .toList();
+                    log.info("   🎯 FileAction for '{}' targets methods: {}",
+                            node.getSimpleName(), targetMethods);
+                }
+
                 proposal.getFilesToModify().add(FileAction.builder()
-                        .filePath(path).actionType(FileAction.ActionType.MODIFY)
-                        .className(node.getFullyQualifiedName()).reason("Required for task").build());
+                        .filePath(path)
+                        .actionType(FileAction.ActionType.MODIFY)
+                        .className(node.getFullyQualifiedName())
+                        .targetMethods(targetMethods)
+                        .reason("Required for task")
+                        .build());
             }
         }
         for (String path : dto.filesToCreate) {
@@ -286,12 +362,30 @@ public class ScopeDiscoveryAgent {
     }
 
     private ScopeProposal createFallbackProposal(List<GraphNode> candidates) {
-        ScopeProposal proposal = ScopeProposal.builder().reasoning("Fallback").estimatedComplexity(5).build();
+        ScopeProposal proposal = ScopeProposal.builder()
+                .reasoning("Fallback - LLM analysis failed")
+                .estimatedComplexity(5)
+                .build();
+
         for (int i = 0; i < Math.min(3, candidates.size()); i++) {
             GraphNode node = candidates.get(i);
+
+            // Include method-level targeting even in fallback
+            List<String> targetMethods = null;
+            String fqn = node.getFullyQualifiedName();
+            if (methodMatches.containsKey(fqn)) {
+                targetMethods = methodMatches.get(fqn).stream()
+                        .map(MethodMatch::methodName)
+                        .toList();
+            }
+
             proposal.getFilesToModify().add(FileAction.builder()
-                    .filePath(node.getFilePath()).actionType(FileAction.ActionType.MODIFY)
-                    .className(node.getFullyQualifiedName()).reason("Required").build());
+                    .filePath(node.getFilePath())
+                    .actionType(FileAction.ActionType.MODIFY)
+                    .className(node.getFullyQualifiedName())
+                    .targetMethods(targetMethods)
+                    .reason("Required")
+                    .build());
         }
         return proposal;
     }
@@ -339,6 +433,70 @@ public class ScopeDiscoveryAgent {
             log.debug("Failed to extract class name from chunk ID: {}", chunkId, e);
             return null;
         }
+    }
+
+    /**
+     * Calculate adaptive relevance threshold based on score distribution.
+     *
+     * Strategy:
+     * 1. Find score gaps (significant drops between consecutive matches)
+     * 2. Use the largest gap as natural cutoff point
+     * 3. Ensure we take at least top 3 matches (if available)
+     * 4. Enforce minimum threshold of 0.5 (50% similarity)
+     * 5. Enforce maximum threshold of 0.8 (avoid being too strict)
+     *
+     * Examples:
+     * - Scores: [0.95, 0.92, 0.88, 0.45, 0.40] → threshold ~0.88 (gap of 0.43)
+     * - Scores: [0.75, 0.73, 0.71, 0.70] → threshold ~0.70 (no clear gap, take top N)
+     * - Scores: [0.45, 0.44, 0.42] → threshold 0.5 (all below min, use minimum)
+     */
+    private double calculateAdaptiveThreshold(List<PineconeRetriever.CodeContext> matches) {
+        if (matches == null || matches.isEmpty()) {
+            return 0.5; // Default minimum
+        }
+
+        final double MIN_THRESHOLD = 0.5;  // Never go below 50% similarity
+        final double MAX_THRESHOLD = 0.8;  // Never be stricter than 80%
+        final int MIN_MATCHES = 3;          // Always consider at least top 3
+        final double SIGNIFICANT_GAP = 0.15; // Gap of 15% is significant
+
+        // If we have very few matches, just use minimum threshold
+        if (matches.size() <= MIN_MATCHES) {
+            double topScore = matches.get(0).score();
+            return Math.max(MIN_THRESHOLD, topScore * 0.7); // 70% of top score
+        }
+
+        // Find the largest score gap in top 10 matches
+        double largestGap = 0;
+        int gapIndex = -1;
+
+        for (int i = 0; i < Math.min(matches.size() - 1, 10); i++) {
+            double gap = matches.get(i).score() - matches.get(i + 1).score();
+            if (gap > largestGap && i >= (MIN_MATCHES - 1)) {
+                // Only consider gaps after we've included minimum matches
+                largestGap = gap;
+                gapIndex = i;
+            }
+        }
+
+        double threshold;
+
+        if (largestGap >= SIGNIFICANT_GAP && gapIndex >= 0) {
+            // Found a significant gap - use score after the gap as threshold
+            threshold = matches.get(gapIndex).score();
+            log.debug("   📊 Found significant gap ({:.3f}) at index {}", largestGap, gapIndex);
+        } else {
+            // No significant gap - use relative threshold (70% of top score)
+            double topScore = matches.get(0).score();
+            threshold = topScore * 0.7;
+            log.debug("   📊 No significant gap found, using 70% of top score ({:.3f})", topScore);
+        }
+
+        // Enforce bounds
+        threshold = Math.max(MIN_THRESHOLD, Math.min(MAX_THRESHOLD, threshold));
+
+        log.debug("   📊 Final adaptive threshold: {:.3f}", threshold);
+        return threshold;
     }
 
     private String extractRepoName(String repoUrl) {

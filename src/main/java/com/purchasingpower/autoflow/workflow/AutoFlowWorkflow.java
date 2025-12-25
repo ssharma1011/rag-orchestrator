@@ -29,6 +29,7 @@ public class AutoFlowWorkflow {
     private final LogAnalyzerAgent logAnalyzer;
     private final CodeIndexerAgent codeIndexer;
     private final ScopeDiscoveryAgent scopeDiscovery;
+    private final ScopeApprovalAgent scopeApproval;
     private final ContextBuilderAgent contextBuilder;
     private final CodeGeneratorAgent codeGenerator;
     private final BuildValidatorAgent buildValidator;
@@ -50,6 +51,7 @@ public class AutoFlowWorkflow {
         graph.addNode("log_analyzer", node_async(logAnalyzer::execute));
         graph.addNode("code_indexer", node_async(codeIndexer::execute));
         graph.addNode("scope_discovery", node_async(scopeDiscovery::execute));
+        graph.addNode("scope_approval", node_async(scopeApproval::execute));
         graph.addNode("context_builder", node_async(contextBuilder::execute));
         graph.addNode("code_generator", node_async(codeGenerator::execute));
         graph.addNode("build_validator", node_async(buildValidator::execute));
@@ -112,21 +114,30 @@ public class AutoFlowWorkflow {
                         log.info("   Match: {}", "DOCUMENTATION".equals(analysis.getTaskType()));
                     }
                     log.info("═══════════════════════════════════════════════════════");
-                    // NEW: If documentation request, route to documentation agent
+
+                    // If documentation request, route to documentation agent
                     if (analysis != null && "DOCUMENTATION".equalsIgnoreCase(analysis.getTaskType())) {
                         log.info("📚 Routing to documentation agent after indexing");
                         return "documentation_agent";
                     }
 
-                    // Original logic
                     if (shouldPause(s)) {
                         return "ask_developer";
                     }
+
+                    // CRITICAL FIX: If scope proposal exists and user just responded, validate approval
+                    if (s.getScopeProposal() != null && userJustResponded(s)) {
+                        log.info("✅ Scope proposal exists + user responded → Validating approval");
+                        return "scope_approval";
+                    }
+
+                    // Otherwise, run scope discovery
                     return "scope_discovery";
                 }),
                 Map.of(
                         "scope_discovery", "scope_discovery",
-                        "documentation_agent", "documentation_agent",  // NEW!
+                        "scope_approval", "scope_approval",
+                        "documentation_agent", "documentation_agent",
                         "ask_developer", "ask_developer"
                 )
         );
@@ -134,6 +145,10 @@ public class AutoFlowWorkflow {
         graph.addEdge("documentation_agent", END);
 
         graph.addConditionalEdges("scope_discovery",
+                edge_async(s -> shouldPause(s) ? "ask_developer" : "context_builder"),
+                Map.of("context_builder", "context_builder", "ask_developer", "ask_developer"));
+
+        graph.addConditionalEdges("scope_approval",
                 edge_async(s -> shouldPause(s) ? "ask_developer" : "context_builder"),
                 Map.of("context_builder", "context_builder", "ask_developer", "ask_developer"));
 
@@ -187,6 +202,21 @@ public class AutoFlowWorkflow {
     private boolean shouldPause(WorkflowState state) {
         return state.getLastAgentDecision() != null &&
                 state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.ASK_DEV;
+    }
+
+    /**
+     * Check if user just responded to a question.
+     * Used to detect when we need to validate approval instead of re-running agents.
+     */
+    private boolean userJustResponded(WorkflowState state) {
+        var history = state.getConversationHistory();
+        if (history == null || history.size() < 2) {
+            return false;
+        }
+
+        // Check if last message is from user
+        var lastMessage = history.get(history.size() - 1);
+        return "user".equals(lastMessage.getRole());
     }
 
     private String routeFromBuildValidator(WorkflowState state) {

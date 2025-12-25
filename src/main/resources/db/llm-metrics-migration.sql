@@ -55,7 +55,7 @@ CREATE TABLE llm_call_metrics (
     model VARCHAR2(100) NOT NULL,
     prompt CLOB,
     prompt_length NUMBER,
-    temperature BINARY_DOUBLE,
+    temperature FLOAT(53),
     max_tokens NUMBER,
 
     -- RESPONSE DETAILS
@@ -67,19 +67,19 @@ CREATE TABLE llm_call_metrics (
     -- PERFORMANCE METRICS
     time_to_first_token NUMBER,
     latency_ms NUMBER NOT NULL,
-    tokens_per_second BINARY_DOUBLE,
+    tokens_per_second FLOAT(53),
 
     -- TOKEN USAGE (COST TRACKING)
     input_tokens NUMBER NOT NULL,
     output_tokens NUMBER NOT NULL,
     total_tokens NUMBER NOT NULL,
-    estimated_cost BINARY_DOUBLE,
+    estimated_cost FLOAT(53),
 
     -- RAGAS QUALITY METRICS
-    context_relevance_score BINARY_DOUBLE,
-    answer_relevance_score BINARY_DOUBLE,
-    faithfulness_score BINARY_DOUBLE,
-    response_quality_score BINARY_DOUBLE,
+    context_relevance_score FLOAT(53),
+    answer_relevance_score FLOAT(53),
+    faithfulness_score FLOAT(53),
+    response_quality_score FLOAT(53),
 
     -- RETRY & ERROR HANDLING
     retry_count NUMBER DEFAULT 0,

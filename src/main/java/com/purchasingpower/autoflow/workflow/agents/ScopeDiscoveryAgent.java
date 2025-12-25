@@ -76,14 +76,12 @@ public class ScopeDiscoveryAgent {
     // Track method-level matches from Pinecone
     // Key: className, Value: List of (methodName, score, content)
     private final Map<String, List<MethodMatch>> methodMatches = new HashMap<>();
-    private final Map<String, Float> topScorePerClass = new HashMap<>();  // Track top score for each class
 
     private record MethodMatch(String methodName, float score, String content, String chunkType) {}
 
     private List<GraphNode> findCandidateClasses(RequirementAnalysis req, String repoName) {
         Set<GraphNode> candidates = new HashSet<>();
         methodMatches.clear(); // Reset for each execution
-        topScorePerClass.clear(); // Reset top scores
 
         log.info("════════════════════════════════════════════════════════════");
         log.info("🔍 SCOPE DISCOVERY - Finding Candidate Classes");
@@ -178,22 +176,14 @@ public class ScopeDiscoveryAgent {
 
             // Skip if we already processed this class
             if (className != null && processedClasses.contains(className)) {
-                // Only track additional methods if they're highly relevant
-                // (within 10% of the top score for this class)
+                // Track additional methods - let LLM decide relevance based on knowledge graph
+                // The Neo4j context (call graphs, signatures, purposes) helps LLM reason
+                // which methods actually need modification
                 if (methodName != null && !methodName.isEmpty()) {
-                    float topScore = topScorePerClass.getOrDefault(className, 0.0f);
-                    float scoreThreshold = topScore * 0.90f; // Within 10% of top score
-
-                    if (match.score() >= scoreThreshold) {
-                        methodMatches.computeIfAbsent(className, k -> new ArrayList<>())
-                                .add(new MethodMatch(methodName, match.score(), match.content(), chunkType));
-                        log.info("   📌 Tracked relevant method '{}' for class '{}' (score: {:.2f}, top: {:.2f})",
-                                methodName, className.substring(className.lastIndexOf('.') + 1),
-                                match.score(), topScore);
-                    } else {
-                        log.debug("   ⏭️  Skipped method '{}' (score {:.2f} < threshold {:.2f})",
-                                methodName, match.score(), scoreThreshold);
-                    }
+                    methodMatches.computeIfAbsent(className, k -> new ArrayList<>())
+                            .add(new MethodMatch(methodName, match.score(), match.content(), chunkType));
+                    log.debug("   📌 Tracked method '{}' for class '{}' (score: {:.2f}) - LLM will decide relevance",
+                            methodName, className.substring(className.lastIndexOf('.') + 1), match.score());
                 }
                 continue;
             }
@@ -220,9 +210,6 @@ public class ScopeDiscoveryAgent {
 
                     // CRITICAL: Track method-level information
                     if (methodName != null && !methodName.isEmpty()) {
-                        // Record top score for this class (first method we see)
-                        topScorePerClass.put(className, match.score());
-
                         methodMatches.computeIfAbsent(className, k -> new ArrayList<>())
                                 .add(new MethodMatch(methodName, match.score(), match.content(), chunkType));
                         log.info("   ✅ Added class '{}' with target method '{}' (score: {:.2f})",

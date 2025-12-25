@@ -181,7 +181,8 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
                 var response = pineconeClient.getIndexConnection(indexName)
                         .fetch(List.of(metadataId), "");
 
-                log.debug("📊 Fetch response (attempt {}): {}", attempt, response);
+                log.debug("📊 Fetch response (attempt {}): {} vector(s) found",
+                        attempt, response != null ? response.getVectorsCount() : 0);
 
                 if (response == null) {
                     log.warn("⚠️ Fetch response is null (attempt {})", attempt);

@@ -176,39 +176,58 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
             String metadataId = METADATA_VECTOR_PREFIX + repoName + INDEX_STATE_SUFFIX;
             log.info("🔍 Fetching metadata vector ID: {}", metadataId);
 
-            // Query by ID using fetch
-            var response = pineconeClient.getIndexConnection(indexName)
-                    .fetch(List.of(metadataId), "");
+            // Retry up to 3 times to handle Pinecone eventual consistency
+            for (int attempt = 1; attempt <= 3; attempt++) {
+                var response = pineconeClient.getIndexConnection(indexName)
+                        .fetch(List.of(metadataId), "");
 
-            log.debug("📊 Fetch response: {}", response);
+                log.debug("📊 Fetch response (attempt {}): {}", attempt, response);
 
-            if (response == null) {
-                log.warn("⚠️ Fetch response is null");
+                if (response == null) {
+                    log.warn("⚠️ Fetch response is null (attempt {})", attempt);
+                    if (attempt < 3) {
+                        Thread.sleep(1000); // Wait 1 second before retry
+                        continue;
+                    }
+                    return null;
+                }
+
+                if (response.getVectorsMap().isEmpty()) {
+                    log.warn("⚠️ No vectors found in fetch response. Vector map is empty (attempt {})", attempt);
+                    if (attempt < 3) {
+                        Thread.sleep(1000); // Wait 1 second before retry
+                        continue;
+                    }
+                    return null;
+                }
+
+                // Success! Vector found
+                var vector = response.getVectorsMap().get(metadataId);
+                if (vector == null) {
+                    log.warn("⚠️ Metadata vector with ID '{}' not found in response (attempt {})", metadataId, attempt);
+                    log.debug("Available vector IDs: {}", response.getVectorsMap().keySet());
+                    if (attempt < 3) {
+                        Thread.sleep(1000);
+                        continue;
+                    }
+                    return null;
+                }
+
+                var metadata = vector.getMetadata().getFieldsMap();
+                log.debug("📋 Metadata fields: {}", metadata.keySet());
+
+                if (metadata.containsKey("last_indexed_commit")) {
+                    String commit = metadata.get("last_indexed_commit").getStringValue();
+                    log.info("✅ Found previous commit: {} (attempt {})",
+                            commit.substring(0, Math.min(8, commit.length())), attempt);
+                    return commit;
+                }
+
+                log.warn("⚠️ Metadata vector found but missing 'last_indexed_commit' field");
                 return null;
             }
 
-            if (response.getVectorsMap().isEmpty()) {
-                log.warn("⚠️ No vectors found in fetch response. Vector map is empty.");
-                return null;
-            }
-
-            var vector = response.getVectorsMap().get(metadataId);
-            if (vector == null) {
-                log.warn("⚠️ Metadata vector with ID '{}' not found in response", metadataId);
-                log.debug("Available vector IDs: {}", response.getVectorsMap().keySet());
-                return null;
-            }
-
-            var metadata = vector.getMetadata().getFieldsMap();
-            log.debug("📋 Metadata fields: {}", metadata.keySet());
-
-            if (metadata.containsKey("last_indexed_commit")) {
-                String commit = metadata.get("last_indexed_commit").getStringValue();
-                log.info("✅ Found previous commit: {}", commit.substring(0, Math.min(8, commit.length())));
-                return commit;
-            }
-
-            log.warn("⚠️ Metadata vector found but missing 'last_indexed_commit' field");
+            // All retries exhausted
             return null;
 
         } catch (Exception e) {
@@ -626,12 +645,23 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
             );
 
             var response = pineconeClient.getIndexConnection(indexName).upsert(List.of(metadataVector), "");
+
+            log.info("📤 Upsert response: {}", response);
             log.info("✅ Saved metadata vector to Pinecone. Commit: {}, Vectors: {}",
                     commitHash.substring(0, Math.min(8, commitHash.length())), vectorCount);
-            log.debug("Upsert response: {}", response);
+
+            // Verify the save by fetching it back (handles eventual consistency)
+            Thread.sleep(1000); // Wait 1 second for Pinecone to process
+            var verifyResponse = pineconeClient.getIndexConnection(indexName).fetch(List.of(metadataId), "");
+            if (verifyResponse != null && !verifyResponse.getVectorsMap().isEmpty()) {
+                log.info("✅ VERIFIED: Metadata vector successfully stored and retrievable");
+            } else {
+                log.warn("⚠️ WARNING: Metadata vector saved but not immediately retrievable (eventual consistency issue)");
+            }
 
         } catch (Exception e) {
-            log.error("❌ Failed to update index state: {}", e.getMessage(), e);
+            log.error("❌ CRITICAL: Failed to update index state: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to save metadata vector to Pinecone", e);
         }
     }
 

@@ -11,6 +11,7 @@ import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.File;
 import java.io.IOException;
@@ -39,7 +40,9 @@ public class CodeIndexerAgent {
     private final IncrementalEmbeddingSyncService embeddingSyncService;
     private final EntityExtractor entityExtractor;
     private final Neo4jGraphStore neo4jGraphStore;
+    private final com.purchasingpower.autoflow.repository.GraphNodeRepository graphNodeRepository;
 
+    @Transactional
     public Map<String, Object> execute(WorkflowState state) {
         log.info("📦 Indexing codebase: {}", state.getRepoUrl());
 
@@ -186,6 +189,85 @@ public class CodeIndexerAgent {
             log.info("   Methods: {}", combinedGraph.getMethods().size());
             log.info("   Fields: {}", combinedGraph.getFields().size());
             log.info("   Relationships: {}", combinedGraph.getRelationships().size());
+
+            // ================================================================
+            // STEP 4.5: ORACLE CODE_NODES TABLE SYNC
+            // ================================================================
+
+            log.info("🔄 Syncing to Oracle CODE_NODES table...");
+
+            // Convert Neo4j entities to JPA GraphNode entities
+            List<com.purchasingpower.autoflow.model.graph.GraphNode> graphNodes = new ArrayList<>();
+
+            // Convert classes
+            for (var classNode : combinedGraph.getClasses()) {
+                graphNodes.add(com.purchasingpower.autoflow.model.graph.GraphNode.builder()
+                        .nodeId(classNode.getId())
+                        .type(com.purchasingpower.autoflow.model.ast.ChunkType.CLASS)
+                        .repoName(repoName)
+                        .fullyQualifiedName(classNode.getFullyQualifiedName())
+                        .simpleName(classNode.getName())
+                        .packageName(classNode.getPackageName())
+                        .filePath(classNode.getSourceFilePath())
+                        .parentNodeId(null)
+                        .summary(classNode.getJavadoc() != null ? classNode.getJavadoc() : "")
+                        .lineCount(classNode.getEndLine() - classNode.getStartLine())
+                        .domain(null) // Will be populated by LLM later if needed
+                        .businessCapability(null)
+                        .features(null)
+                        .concepts(null)
+                        .build());
+            }
+
+            // Convert methods
+            for (var methodNode : combinedGraph.getMethods()) {
+                graphNodes.add(com.purchasingpower.autoflow.model.graph.GraphNode.builder()
+                        .nodeId(methodNode.getId())
+                        .type(com.purchasingpower.autoflow.model.ast.ChunkType.METHOD)
+                        .repoName(repoName)
+                        .fullyQualifiedName(methodNode.getFullyQualifiedName())
+                        .simpleName(methodNode.getName())
+                        .packageName(methodNode.getClassName().substring(0,
+                                methodNode.getClassName().lastIndexOf('.') > 0 ?
+                                methodNode.getClassName().lastIndexOf('.') : 0))
+                        .filePath(methodNode.getSourceFilePath())
+                        .parentNodeId(methodNode.getClassName()) // Parent is the class
+                        .summary(methodNode.getJavadoc() != null ? methodNode.getJavadoc() : "")
+                        .lineCount(methodNode.getEndLine() - methodNode.getStartLine())
+                        .domain(null)
+                        .businessCapability(null)
+                        .features(null)
+                        .concepts(null)
+                        .build());
+            }
+
+            // Convert fields
+            for (var fieldNode : combinedGraph.getFields()) {
+                graphNodes.add(com.purchasingpower.autoflow.model.graph.GraphNode.builder()
+                        .nodeId(fieldNode.getId())
+                        .type(com.purchasingpower.autoflow.model.ast.ChunkType.FIELD)
+                        .repoName(repoName)
+                        .fullyQualifiedName(fieldNode.getFullyQualifiedName())
+                        .simpleName(fieldNode.getName())
+                        .packageName(fieldNode.getClassName().substring(0,
+                                fieldNode.getClassName().lastIndexOf('.') > 0 ?
+                                fieldNode.getClassName().lastIndexOf('.') : 0))
+                        .filePath(fieldNode.getSourceFilePath())
+                        .parentNodeId(fieldNode.getClassName()) // Parent is the class
+                        .summary(fieldNode.getJavadoc() != null ? fieldNode.getJavadoc() : "")
+                        .lineCount(1)
+                        .domain(null)
+                        .businessCapability(null)
+                        .features(null)
+                        .concepts(null)
+                        .build());
+            }
+
+            // Delete old nodes for this repo and save new ones
+            graphNodeRepository.deleteByRepoName(repoName);
+            graphNodeRepository.saveAll(graphNodes);
+
+            log.info("✅ Oracle CODE_NODES table updated: {} nodes saved", graphNodes.size());
 
             // ================================================================
             // STEP 5: BUILD INDEXING RESULT (USING ACTUAL FIELDS!)

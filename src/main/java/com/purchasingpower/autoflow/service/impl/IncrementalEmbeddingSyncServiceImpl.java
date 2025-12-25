@@ -598,8 +598,8 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
             String metadataId = METADATA_VECTOR_PREFIX + repoName + INDEX_STATE_SUFFIX;
             log.info("💾 Saving metadata vector ID: {}", metadataId);
 
-            // Create dummy vector (Pinecone requires a vector, even for metadata)
-            List<Float> dummyVector = new ArrayList<>(Collections.nCopies(EMBEDDING_DIMENSION, 0.0f));
+            // Create dummy vector with small non-zero values (Pinecone rejects all-zero vectors)
+            List<Float> dummyVector = new ArrayList<>(Collections.nCopies(EMBEDDING_DIMENSION, 0.001f));
 
             Struct metadata = Struct.newBuilder()
                     .putFields("type", Value.newBuilder()

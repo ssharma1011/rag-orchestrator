@@ -163,9 +163,14 @@ public class ScopeDiscoveryAgent {
         for (PineconeRetriever.CodeContext match : filteredMatches) {
             // Pinecone stores METHOD/FIELD chunks with IDs like:
             // "repo:com.package.ClassName.methodName"
-            // Use CodeContext fields directly instead of parsing ID
+            // Extract class name from chunk ID (PineconeRetriever may not populate className field)
 
-            String className = match.className();  // Already extracted by PineconeRetriever
+            String className = match.className();
+            if (className == null || className.isEmpty()) {
+                // Fallback: extract from chunk ID
+                className = extractClassNameFromChunkId(match.id());
+            }
+
             String methodName = match.methodName();  // Method name if this is a method chunk
             String chunkType = match.chunkType();     // METHOD, FIELD, CLASS, etc.
 
@@ -308,7 +313,11 @@ public class ScopeDiscoveryAgent {
         try {
             // Use instrumented call with agent name for proper logging
             String jsonResponse = geminiClient.callChatApi(prompt, "ScopeDiscoveryAgent", null);
-            ScopeProposalDTO dto = objectMapper.readValue(jsonResponse, ScopeProposalDTO.class);
+
+            // Strip markdown code blocks if present (LLM sometimes wraps JSON in ```json ... ```)
+            String cleanedJson = stripMarkdownCodeBlocks(jsonResponse);
+
+            ScopeProposalDTO dto = objectMapper.readValue(cleanedJson, ScopeProposalDTO.class);
             return convertToScopeProposal(dto, candidates);
         } catch (Exception e) {
             log.error("LLM scope analysis failed, using fallback", e);
@@ -433,6 +442,36 @@ public class ScopeDiscoveryAgent {
             log.debug("Failed to extract class name from chunk ID: {}", chunkId, e);
             return null;
         }
+    }
+
+    /**
+     * Strip markdown code blocks from LLM response.
+     * LLMs sometimes wrap JSON in ```json ... ``` which breaks JSON parsing.
+     */
+    private String stripMarkdownCodeBlocks(String response) {
+        if (response == null) {
+            return response;
+        }
+
+        String trimmed = response.trim();
+
+        // Remove ```json ... ``` or ``` ... ``` wrapping
+        if (trimmed.startsWith("```")) {
+            // Find the end of the opening fence (could be ```json or just ```)
+            int firstNewline = trimmed.indexOf('\n');
+            if (firstNewline > 0) {
+                trimmed = trimmed.substring(firstNewline + 1);
+            }
+
+            // Remove closing fence
+            if (trimmed.endsWith("```")) {
+                trimmed = trimmed.substring(0, trimmed.length() - 3);
+            }
+
+            return trimmed.trim();
+        }
+
+        return response;
     }
 
     /**

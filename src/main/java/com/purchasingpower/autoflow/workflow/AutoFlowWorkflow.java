@@ -2,6 +2,7 @@ package com.purchasingpower.autoflow.workflow;
 
 import com.purchasingpower.autoflow.workflow.agents.*;
 import com.purchasingpower.autoflow.workflow.state.AgentDecision;
+import com.purchasingpower.autoflow.workflow.state.RequirementAnalysis;
 import com.purchasingpower.autoflow.workflow.state.WorkflowState;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +36,8 @@ public class AutoFlowWorkflow {
     private final PRReviewerAgent prReviewer;
     private final ReadmeGeneratorAgent readmeGenerator;
     private final PRCreatorAgent prCreator;
+    private final DocumentationAgent documentationAgent;
+
 
     private CompiledGraph<WorkflowState> compiledGraph;
 
@@ -54,6 +57,8 @@ public class AutoFlowWorkflow {
         graph.addNode("pr_reviewer", node_async(prReviewer::execute));
         graph.addNode("readme_generator", node_async(readmeGenerator::execute));
         graph.addNode("pr_creator", node_async(prCreator::execute));
+        graph.addNode("documentation_agent", node_async(documentationAgent::execute));
+
 
         graph.addNode("ask_developer", node_async(s -> {
             Map<String, Object> updates = new java.util.HashMap<>(s.toMap());
@@ -65,14 +70,49 @@ public class AutoFlowWorkflow {
         graph.addEdge(START, "requirement_analyzer");
 
         graph.addConditionalEdges("requirement_analyzer",
-                edge_async(s -> shouldPause(s) ? "ask_developer" : (s.hasLogs() ? "log_analyzer" : "code_indexer")),
-                Map.of("log_analyzer", "log_analyzer", "code_indexer", "code_indexer", "ask_developer", "ask_developer"));
-
+                edge_async(s -> {
+                    RequirementAnalysis analysis = s.getRequirementAnalysis();
+                    if (analysis != null && "DOCUMENTATION".equals(analysis.getTaskType())) {
+                        log.info("📚 Routing to documentation agent");
+                        return "code_indexer";  // Still need to index first!
+                    }
+                    if (shouldPause(s)) {
+                        return "ask_developer";
+                    }
+                    return s.hasLogs() ? "log_analyzer" : "code_indexer";
+                }),
+                Map.of(
+                        "ask_developer", "ask_developer",
+                        "log_analyzer", "log_analyzer",
+                        "code_indexer", "code_indexer"
+                )
+        );
         graph.addEdge("log_analyzer", "code_indexer");
 
         graph.addConditionalEdges("code_indexer",
-                edge_async(s -> shouldPause(s) ? "ask_developer" : "scope_discovery"),
-                Map.of("scope_discovery", "scope_discovery", "ask_developer", "ask_developer"));
+                edge_async(s -> {
+                    RequirementAnalysis analysis = s.getRequirementAnalysis();
+
+                    // NEW: If documentation request, route to documentation agent
+                    if (analysis != null && "DOCUMENTATION".equals(analysis.getTaskType())) {
+                        log.info("📚 Routing to documentation agent after indexing");
+                        return "documentation_agent";
+                    }
+
+                    // Original logic
+                    if (shouldPause(s)) {
+                        return "ask_developer";
+                    }
+                    return "scope_discovery";
+                }),
+                Map.of(
+                        "scope_discovery", "scope_discovery",
+                        "documentation_agent", "documentation_agent",  // NEW!
+                        "ask_developer", "ask_developer"
+                )
+        );
+
+        graph.addEdge("documentation_agent", END);
 
         graph.addConditionalEdges("scope_discovery",
                 edge_async(s -> shouldPause(s) ? "ask_developer" : "context_builder"),

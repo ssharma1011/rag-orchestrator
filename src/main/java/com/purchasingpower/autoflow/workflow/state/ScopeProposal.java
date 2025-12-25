@@ -1,5 +1,6 @@
 package com.purchasingpower.autoflow.workflow.state;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -12,30 +13,29 @@ import java.util.List;
 /**
  * Agent's proposal of which files to modify/create.
  * Shown to developer for approval.
+ * CRITICAL FIX: Ensure all Lists are never null for Jackson serialization
  */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class ScopeProposal implements Serializable {
 
     /**
      * Files to modify (existing files)
      */
-    @Builder.Default
-    private List<FileAction> filesToModify = new ArrayList<>();
+    private List<FileAction> filesToModify;
 
     /**
      * Files to create (new files)
      */
-    @Builder.Default
-    private List<FileAction> filesToCreate = new ArrayList<>();
+    private List<FileAction> filesToCreate;
 
     /**
      * Test files to update/create
      */
-    @Builder.Default
-    private List<FileAction> testsToUpdate = new ArrayList<>();
+    private List<FileAction> testsToUpdate;
 
     /**
      * Explanation of why these files
@@ -53,14 +53,45 @@ public class ScopeProposal implements Serializable {
     /**
      * Potential risks
      */
-    @Builder.Default
-    private List<String> risks = new ArrayList<>();
+    private List<String> risks;
+
+    // ================================================================
+    // CUSTOM GETTERS - GUARANTEE NON-NULL LISTS
+    // ================================================================
+
+    public List<FileAction> getFilesToModify() {
+        if (filesToModify == null) {
+            filesToModify = new ArrayList<>();
+        }
+        return filesToModify;
+    }
+
+    public List<FileAction> getFilesToCreate() {
+        if (filesToCreate == null) {
+            filesToCreate = new ArrayList<>();
+        }
+        return filesToCreate;
+    }
+
+    public List<FileAction> getTestsToUpdate() {
+        if (testsToUpdate == null) {
+            testsToUpdate = new ArrayList<>();
+        }
+        return testsToUpdate;
+    }
+
+    public List<String> getRisks() {
+        if (risks == null) {
+            risks = new ArrayList<>();
+        }
+        return risks;
+    }
 
     /**
      * Total file count (for validation against MAX_FILES limit)
      */
     public int getTotalFileCount() {
-        return filesToModify.size() + filesToCreate.size() + testsToUpdate.size();
+        return getFilesToModify().size() + getFilesToCreate().size() + getTestsToUpdate().size();
     }
 
     /**
@@ -89,22 +120,43 @@ public class ScopeProposal implements Serializable {
             
             ✅ **Approve?** (yes/no/modify)
             """,
-                filesToModify.size(), formatFileList(filesToModify),
-                filesToCreate.size(), formatFileList(filesToCreate),
-                testsToUpdate.size(), formatFileList(testsToUpdate),
+                getFilesToModify().size(), formatFileList(getFilesToModify()),
+                getFilesToCreate().size(), formatFileList(getFilesToCreate()),
+                getTestsToUpdate().size(), formatFileList(getTestsToUpdate()),
                 reasoning,
                 estimatedComplexity,
-                risks.isEmpty() ? "None identified" : String.join("\n", risks)
+                getRisks().isEmpty() ? "None identified" : String.join("\n", getRisks())
         );
     }
 
     private String formatFileList(List<FileAction> actions) {
-        if (actions.isEmpty()) {
+        if (actions == null || actions.isEmpty()) {
             return "  (none)";
         }
         return actions.stream()
                 .map(a -> String.format("  - %s (%s)", a.getFilePath(), a.getReason()))
                 .reduce((a, b) -> a + "\n" + b)
                 .orElse("  (none)");
+    }
+
+    /**
+     * Builder customization to ensure default values
+     */
+    public static class ScopeProposalBuilder {
+        public ScopeProposal build() {
+            if (filesToModify == null) filesToModify = new ArrayList<>();
+            if (filesToCreate == null) filesToCreate = new ArrayList<>();
+            if (testsToUpdate == null) testsToUpdate = new ArrayList<>();
+            if (risks == null) risks = new ArrayList<>();
+
+            return new ScopeProposal(
+                    filesToModify,
+                    filesToCreate,
+                    testsToUpdate,
+                    reasoning,
+                    estimatedComplexity,
+                    risks
+            );
+        }
     }
 }

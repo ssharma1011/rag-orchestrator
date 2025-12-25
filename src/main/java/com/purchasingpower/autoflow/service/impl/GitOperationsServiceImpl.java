@@ -6,13 +6,26 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.jgit.api.Git;
 
+import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.diff.DiffEntry;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectReader;
+import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevTree;
+import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.eclipse.jgit.treewalk.AbstractTreeIterator;
+import org.eclipse.jgit.treewalk.CanonicalTreeParser;
 import org.springframework.stereotype.Service;
 import org.springframework.util.FileSystemUtils;
 
 import java.io.File;
+import java.io.IOException;
+import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -131,6 +144,121 @@ public class GitOperationsServiceImpl implements GitOperationsService {
 
         } catch (Exception e) {
             throw new RuntimeException("Git Push Failed: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public String getCurrentCommitHash(File workspaceDir) {
+        try (Git git = Git.open(workspaceDir)) {
+            ObjectId head = git.getRepository().resolve("HEAD");
+            if (head == null) {
+                throw new RuntimeException("No HEAD commit found");
+            }
+            return head.getName();
+        } catch (IOException e) {
+            log.error("Failed to get current commit hash for: {}", workspaceDir, e);
+            throw new RuntimeException("Failed to get commit hash", e);
+        }
+    }
+
+    @Override
+    public List<String> getChangedFilesBetweenCommits(File workspaceDir, String fromCommit, String toCommit) {
+        log.info("Getting changed files between {} and {}", fromCommit, toCommit);
+
+        try (Git git = Git.open(workspaceDir)) {
+            Repository repository = git.getRepository();
+
+            // Get tree iterators for both commits
+            AbstractTreeIterator oldTreeParser = prepareTreeParser(repository, fromCommit);
+            AbstractTreeIterator newTreeParser = prepareTreeParser(repository, toCommit);
+
+            // Compute diff
+            List<DiffEntry> diffs = git.diff()
+                    .setOldTree(oldTreeParser)
+                    .setNewTree(newTreeParser)
+                    .call();
+
+            // Extract file paths (only ADDED, MODIFIED, COPIED - skip DELETED)
+            List<String> changedFiles = diffs.stream()
+                    .filter(diff -> diff.getChangeType() != DiffEntry.ChangeType.DELETE)
+                    .map(diff -> diff.getNewPath())
+                    .filter(path -> path.endsWith(".java"))  // Only Java files
+                    .collect(Collectors.toList());
+
+            log.info("Found {} changed Java files", changedFiles.size());
+            return changedFiles;
+
+        } catch (IOException | GitAPIException e) {
+            log.error("Failed to get changed files", e);
+            throw new RuntimeException("Failed to compute Git diff", e);
+        }
+    }
+
+    @Override
+    public String pullLatestChanges(File workspaceDir) {
+        log.info("Pulling latest changes for: {}", workspaceDir);
+
+        try (Git git = Git.open(workspaceDir)) {
+            // Pull from remote
+            git.pull().call();
+
+            // Get new commit hash
+            return getCurrentCommitHash(workspaceDir);
+
+        } catch (IOException | GitAPIException e) {
+            log.error("Failed to pull latest changes", e);
+            throw new RuntimeException("Failed to pull changes", e);
+        }
+    }
+
+    @Override
+    public boolean isValidGitRepository(File workspaceDir) {
+        if (workspaceDir == null || !workspaceDir.exists() || !workspaceDir.isDirectory()) {
+            return false;
+        }
+
+        File gitDir = new File(workspaceDir, ".git");
+        return gitDir.exists() && gitDir.isDirectory();
+    }
+
+    @Override
+    public String extractRepoName(String repoUrl) {
+        String name = repoUrl;
+        if (name.endsWith(".git")) {
+            name = name.substring(0, name.length() - 4);
+        }
+
+        // Get last part after /
+        int lastSlash = name.lastIndexOf('/');
+        if (lastSlash >= 0) {
+            name = name.substring(lastSlash + 1);
+        }
+
+        return name;
+    }
+
+    // ================================================================
+    // HELPER METHODS
+    // ================================================================
+
+    /**
+     * Prepare tree parser for diff computation
+     */
+    private AbstractTreeIterator prepareTreeParser(Repository repository, String commitSha)
+            throws IOException {
+
+        try (RevWalk walk = new RevWalk(repository)) {
+            ObjectId commitId = repository.resolve(commitSha);
+            RevCommit commit = walk.parseCommit(commitId);
+            RevTree tree = walk.parseTree(commit.getTree().getId());
+
+            CanonicalTreeParser treeParser = new CanonicalTreeParser();
+            try (ObjectReader reader = repository.newObjectReader()) {
+                treeParser.reset(reader, tree.getId());
+            }
+
+            walk.dispose();
+            return treeParser;
         }
     }
 }

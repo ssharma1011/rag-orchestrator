@@ -26,6 +26,9 @@ import java.util.stream.Stream;
  * Replaces text-based embedding with hierarchical class/method chunking.
  *
  * Performance: Uses batch embedding API for 100x speed improvement.
+ *
+ * NOTE: Incremental updates are handled by IncrementalEmbeddingSyncService!
+ * This service only does FULL repository indexing.
  */
 @Slf4j
 @Service

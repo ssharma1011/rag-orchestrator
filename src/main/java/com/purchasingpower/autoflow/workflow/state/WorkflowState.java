@@ -1,5 +1,6 @@
 package com.purchasingpower.autoflow.workflow.state;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.bsc.langgraph4j.state.AgentState;
 import java.io.File;
 import java.util.ArrayList;
@@ -10,6 +11,9 @@ import java.util.Map;
 /**
  * WorkflowState for LangGraph4J workflow orchestration.
  *
+ * CRITICAL FIX: All complex object getters now handle LinkedHashMap deserialization
+ * that occurs when ObjectMapper loads state from database as Map.class.
+ *
  * Extends AgentState and provides ALL setters used across the codebase:
  * - AutoFlowWorkflow uses: setWorkflowStatus, setCurrentAgent, setLastAgentDecision, setBuildAttempt, setReviewAttempt
  * - WorkflowExecutionServiceImpl uses: setConversationId, setWorkflowStatus
@@ -18,12 +22,14 @@ import java.util.Map;
  */
 public class WorkflowState extends AgentState {
 
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+
     public WorkflowState(Map<String, Object> initData) {
         super(initData);
     }
 
     // ================================================================
-    // GETTERS
+    // SIMPLE GETTERS (No deserialization issues)
     // ================================================================
 
     public String getConversationId() {
@@ -56,11 +62,6 @@ public class WorkflowState extends AgentState {
 
     public String getLogsPasted() {
         return this.<String>value("logsPasted").orElse(null);
-    }
-
-    @SuppressWarnings("unchecked")
-    public List<FileUpload> getLogsAttached() {
-        return this.<List<FileUpload>>value("logsAttached").orElse(new ArrayList<>());
     }
 
     public String getWorkflowStatus() {
@@ -99,53 +100,59 @@ public class WorkflowState extends AgentState {
         return this.<File>value("workspaceDir").orElse(null);
     }
 
+    // ================================================================
+    // COMPLEX OBJECT GETTERS (FIXED for LinkedHashMap deserialization)
+    // ================================================================
+
+    /**
+     * FIXED: Safely handles LinkedHashMap deserialization from database.
+     *
+     * When WorkflowState is saved to DB as JSON and then loaded back,
+     * ObjectMapper.readValue(json, Map.class) creates LinkedHashMaps for
+     * all nested objects instead of their proper types.
+     */
     public AgentDecision getLastAgentDecision() {
-        return this.<AgentDecision>value("lastAgentDecision").orElse(null);
+        return convertValue("lastAgentDecision", AgentDecision.class);
     }
 
     public RequirementAnalysis getRequirementAnalysis() {
-        return this.<RequirementAnalysis>value("requirementAnalysis").orElse(null);
+        return convertValue("requirementAnalysis", RequirementAnalysis.class);
     }
 
     public LogAnalysis getLogAnalysis() {
-        return this.<LogAnalysis>value("logAnalysis").orElse(null);
+        return convertValue("logAnalysis", LogAnalysis.class);
     }
 
     public ScopeProposal getScopeProposal() {
-        return this.<ScopeProposal>value("scopeProposal").orElse(null);
+        return convertValue("scopeProposal", ScopeProposal.class);
     }
 
     public StructuredContext getContext() {
-        return this.<StructuredContext>value("context").orElse(null);
+        return convertValue("context", StructuredContext.class);
     }
 
     public com.purchasingpower.autoflow.model.llm.CodeGenerationResponse getGeneratedCode() {
-        return this.<com.purchasingpower.autoflow.model.llm.CodeGenerationResponse>value("generatedCode").orElse(null);
+        return convertValue("generatedCode", com.purchasingpower.autoflow.model.llm.CodeGenerationResponse.class);
     }
 
     public BuildResult getBuildResult() {
-        return this.<BuildResult>value("buildResult").orElse(null);
+        return convertValue("buildResult", BuildResult.class);
     }
 
     public BuildResult getBaselineBuild() {
-        return this.<BuildResult>value("baselineBuild").orElse(null);
+        return convertValue("baselineBuild", BuildResult.class);
     }
 
     public TestResult getTestResult() {
-        return this.<TestResult>value("testResult").orElse(null);
+        return convertValue("testResult", TestResult.class);
     }
 
     public CodeReview getCodeReview() {
-        return this.<CodeReview>value("codeReview").orElse(null);
+        return convertValue("codeReview", CodeReview.class);
     }
 
     public IndexingResult getIndexingResult() {
-        return this.<IndexingResult>value("indexingResult").orElse(null);
-    }
-
-    @SuppressWarnings("unchecked")
-    public List<ChatMessage> getConversationHistory() {
-        return this.<List<ChatMessage>>value("conversationHistory").orElse(new ArrayList<>());
+        return convertValue("indexingResult", IndexingResult.class);
     }
 
     public Object getParsedCode() {
@@ -153,82 +160,107 @@ public class WorkflowState extends AgentState {
     }
 
     // ================================================================
-    // SETTERS - Used by AutoFlowWorkflow, Agents, and Services
+    // LIST GETTERS (Also need safe deserialization)
     // ================================================================
 
-    // Used by: WorkflowExecutionServiceImpl.startWorkflow()
-    public void setConversationId(String id) { data().put("conversationId", id); }
+    @SuppressWarnings("unchecked")
+    public List<FileUpload> getLogsAttached() {
+        return convertList("logsAttached", FileUpload.class);
+    }
 
-    // Used by: AutoFlowWorkflow.execute(), AutoFlowWorkflow.ask_developer node, WorkflowExecutionServiceImpl
-    public void setWorkflowStatus(String status) { data().put("workflowStatus", status); }
-
-    // Used by: AutoFlowWorkflow.executeAgent()
-    public void setCurrentAgent(String agent) { data().put("currentAgent", agent); }
-
-    // Used by: AutoFlowWorkflow.executeAgent()
-    public void setLastAgentDecision(AgentDecision decision) { data().put("lastAgentDecision", decision); }
-
-    // Used by: AutoFlowWorkflow.execute() initialization
-    public void setBuildAttempt(int attempt) { data().put("buildAttempt", attempt); }
-
-    // Used by: AutoFlowWorkflow.execute() initialization
-    public void setReviewAttempt(int attempt) { data().put("reviewAttempt", attempt); }
-
-    // Used by: Agents
-    public void setRequirementAnalysis(RequirementAnalysis analysis) { data().put("requirementAnalysis", analysis); }
-    public void setLogAnalysis(LogAnalysis analysis) { data().put("logAnalysis", analysis); }
-    public void setScopeProposal(ScopeProposal proposal) { data().put("scopeProposal", proposal); }
-    public void setContext(StructuredContext context) { data().put("context", context); }
-    public void setGeneratedCode(com.purchasingpower.autoflow.model.llm.CodeGenerationResponse code) { data().put("generatedCode", code); }
-    public void setBuildResult(BuildResult result) { data().put("buildResult", result); }
-    public void setBaselineBuild(BuildResult result) { data().put("baselineBuild", result); }
-    public void setTestResult(TestResult result) { data().put("testResult", result); }
-    public void setCodeReview(CodeReview review) { data().put("codeReview", review); }
-    public void setIndexingResult(IndexingResult result) { data().put("indexingResult", result); }
-    public void setPrUrl(String url) { data().put("prUrl", url); }
-    public void setPrDescription(String desc) { data().put("prDescription", desc); }
-    public void setWorkspaceDir(File dir) { data().put("workspaceDir", dir); }
-    public void setConversationHistory(List<ChatMessage> history) { data().put("conversationHistory", history); }
+    @SuppressWarnings("unchecked")
+    public List<ChatMessage> getConversationHistory() {
+        return convertList("conversationHistory", ChatMessage.class);
+    }
 
     // ================================================================
-    // HELPER METHODS
+    // HELPER METHODS FOR SAFE DESERIALIZATION
     // ================================================================
 
     /**
-     * Used by: AutoFlowWorkflow.routeFromBuildValidator()
+     * Helper method to safely convert Map to typed object.
+     *
+     * Handles three cases:
+     * 1. Object is already the correct type → return as-is
+     * 2. Object is a Map (LinkedHashMap from JSON) → convert using ObjectMapper
+     * 3. Object is null or incompatible type → return null
      */
-    public void incrementBuildAttempt() {
-        data().put("buildAttempt", getBuildAttempt() + 1);
+    private <T> T convertValue(String key, Class<T> type) {
+        Object obj = value(key).orElse(null);
+
+        if (obj == null) {
+            return null;
+        }
+
+        // Already correct type
+        if (type.isInstance(obj)) {
+            return type.cast(obj);
+        }
+
+        // Map (LinkedHashMap from JSON deserialization)
+        if (obj instanceof Map) {
+            try {
+                return objectMapper.convertValue(obj, type);
+            } catch (Exception e) {
+                // Conversion failed, return null
+                return null;
+            }
+        }
+
+        // Unknown type
+        return null;
     }
 
     /**
-     * Used by: AutoFlowWorkflow.routeFromPRReviewer()
+     * Helper method to safely convert List<Map> to List<T>.
+     *
+     * When lists of complex objects are deserialized from JSON,
+     * each element becomes a LinkedHashMap.
      */
-    public void incrementReviewAttempt() {
-        data().put("reviewAttempt", getReviewAttempt() + 1);
+    private <T> List<T> convertList(String key, Class<T> elementType) {
+        Object obj = value(key).orElse(null);
+
+        if (obj == null) {
+            return new ArrayList<>();
+        }
+
+        if (!(obj instanceof List)) {
+            return new ArrayList<>();
+        }
+
+        List<?> rawList = (List<?>) obj;
+        List<T> result = new ArrayList<>();
+
+        for (Object item : rawList) {
+            if (item == null) {
+                continue;
+            }
+
+            if (elementType.isInstance(item)) {
+                result.add(elementType.cast(item));
+            } else if (item instanceof Map) {
+                try {
+                    T converted = objectMapper.convertValue(item, elementType);
+                    result.add(converted);
+                } catch (Exception e) {
+                    // Skip items that fail conversion
+                }
+            }
+        }
+
+        return result;
     }
 
-    /**
-     * Used by: WorkflowController.respondToPrompt()
-     */
-    public void addChatMessage(String role, String content) {
-        List<ChatMessage> history = new ArrayList<>(getConversationHistory());
-        ChatMessage message = new ChatMessage();
-        message.setRole(role);
-        message.setContent(content);
-        message.setTimestamp(java.time.LocalDateTime.now());
-        history.add(message);
-        data().put("conversationHistory", history);
-    }
+    // ================================================================
+    // CONVENIENCE METHODS
+    // ================================================================
 
     public boolean hasLogs() {
-        String logs = getLogsPasted();
-        boolean hasPasted = logs != null && !logs.isBlank();
-        boolean hasAttached = getLogsAttached() != null && !getLogsAttached().isEmpty();
-        return hasPasted || hasAttached;
+        return getLogsPasted() != null ||
+                (getLogsAttached() != null && !getLogsAttached().isEmpty());
     }
 
-    public int getTotalFilesInScope() {
+    public int getTotalFileCount() {
         ScopeProposal scope = getScopeProposal();
         return scope != null ? scope.getTotalFileCount() : 0;
     }

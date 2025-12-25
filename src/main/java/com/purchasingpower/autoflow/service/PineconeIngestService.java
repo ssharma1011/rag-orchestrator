@@ -1,17 +1,25 @@
 package com.purchasingpower.autoflow.service;
 
-
 import java.io.File;
 
+/**
+ * Service for ingesting code into Pinecone vector database.
+ *
+ * Used by:
+ * - CodeIndexerAgent (full repository indexing)
+ * - IncrementalEmbeddingSyncService (handles incremental updates)
+ */
 public interface PineconeIngestService {
 
     /**
-     * Scans the local workspace for source code.
-     * If code exists, it generates embeddings and syncs them to Pinecone.
+     * Ingest entire repository (full indexing)
      *
-     * @param workspaceDir The local directory where the repo is cloned.
-     * @param repoName The name of the repository (used for metadata filtering).
-     * @return true if code was found and ingested; false if the repo is empty (new project).
+     * IMPORTANT: IncrementalEmbeddingSyncService handles incremental updates.
+     * This method is for FULL indexing only.
+     *
+     * @param workspaceDir Repository workspace directory
+     * @param repoName Repository name (used as namespace)
+     * @return true if code was found and indexed, false if empty/scaffold project
      */
     boolean ingestRepository(File workspaceDir, String repoName);
 }

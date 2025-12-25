@@ -12,49 +12,99 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
 public class MavenBuildServiceImpl implements MavenBuildService {
 
+    // Pattern to extract compilation errors from Maven output
+    private static final Pattern ERROR_PATTERN = Pattern.compile("\\[ERROR\\]\\s+(.+)");
+
     @Override
     public BuildResult buildAndVerify(File projectDir) {
         log.info("Starting Maven Build & Verification in: {}", projectDir.getAbsolutePath());
-        StringBuilder captureLogs = new StringBuilder(); // Store logs here
+
+        long startTime = System.currentTimeMillis();
+        StringBuilder captureLogs = new StringBuilder();
+        List<String> compilationErrors = new ArrayList<>();
 
         try {
             // 1. Determine OS command wrapper
             boolean isWindows = System.getProperty("os.name").toLowerCase().startsWith("windows");
-            Process process = getProcess(projectDir, isWindows);
+            Process process = createMavenProcess(projectDir, isWindows);
 
-            // 3. Stream logs in real-time so you can see compilation errors
+            // 2. Stream logs in real-time and capture errors
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    log.debug("[MVN] {}", line); // Log as debug to avoid spamming, or info to see progress
+                    log.debug("[MVN] {}", line);
                     captureLogs.append(line).append("\n");
+
+                    // Extract compilation errors
+                    Matcher matcher = ERROR_PATTERN.matcher(line);
+                    if (matcher.find()) {
+                        String error = matcher.group(1).trim();
+                        // Filter out noise (Maven header errors)
+                        if (!error.contains("Failed to execute goal") &&
+                                !error.contains("To see the full stack trace")) {
+                            compilationErrors.add(error);
+                        }
+                    }
                 }
             }
 
             int exitCode = process.waitFor();
+            long durationMs = System.currentTimeMillis() - startTime;
 
             if (exitCode != 0) {
-                log.error("Maven Build FAILED with exit code: {}", exitCode);
-                throw new BuildFailureException("Compilation Failed", captureLogs.toString());
+                log.error("Maven Build FAILED with exit code: {} in {}ms", exitCode, durationMs);
+
+                // CRITICAL FIX: Return BuildResult instead of throwing exception
+                return BuildResult.builder()
+                        .success(false)
+                        .compilationErrors(compilationErrors.isEmpty()
+                                ? List.of("Build failed with exit code " + exitCode)
+                                : compilationErrors)
+                        .buildLogs(captureLogs.toString())
+                        .durationMs(durationMs)
+                        .build();
             }
 
-            log.info("✅ Maven Build & Tests PASSED.");
+            log.info("✅ Maven Build & Tests PASSED in {}ms", durationMs);
 
-        } catch (BuildFailureException e) {
-            throw new BuildFailureException("Compilation Failed", captureLogs.toString());
+            return BuildResult.builder()
+                    .success(true)
+                    .compilationErrors(new ArrayList<>())
+                    .buildLogs(captureLogs.toString())
+                    .durationMs(durationMs)
+                    .build();
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("Build interrupted", e);
+
+            return BuildResult.builder()
+                    .success(false)
+                    .compilationErrors(List.of("Build interrupted: " + e.getMessage()))
+                    .buildLogs(captureLogs.toString())
+                    .durationMs(System.currentTimeMillis() - startTime)
+                    .build();
+
+        } catch (Exception e) {
+            log.error("Build validation failed", e);
+
+            return BuildResult.builder()
+                    .success(false)
+                    .compilationErrors(List.of("Build failed: " + e.getMessage()))
+                    .buildLogs(captureLogs.toString())
+                    .durationMs(System.currentTimeMillis() - startTime)
+                    .build();
         }
-        catch (Exception e) {
-            throw new RuntimeException("Build validation failed: " + e.getMessage(), e);
-        }
-        return null;
     }
 
-    private static Process getProcess(File projectDir, boolean isWindows) throws IOException {
+    private Process createMavenProcess(File projectDir, boolean isWindows) throws IOException {
         List<String> command = new ArrayList<>();
 
         if (isWindows) {
@@ -65,16 +115,13 @@ public class MavenBuildServiceImpl implements MavenBuildService {
             command.add("-c");
         }
 
-        // 2. The Maven Command
-        // -B: Batch mode (no colors/interactive)
-        // clean install: Compiles and runs Tests
+        // Maven command: -B (batch mode), clean install
         command.add("mvn -B clean install");
 
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(projectDir);
         builder.redirectErrorStream(true); // Merge stderr into stdout
 
-        Process process = builder.start();
-        return process;
+        return builder.start();
     }
 }

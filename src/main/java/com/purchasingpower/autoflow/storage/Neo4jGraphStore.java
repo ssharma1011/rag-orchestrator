@@ -5,8 +5,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.neo4j.driver.*;
 import org.neo4j.driver.types.Node;
-import org.neo4j.driver.types.Path;
-import org.neo4j.driver.types.Relationship;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -19,12 +17,7 @@ import java.util.stream.Collectors;
 /**
  * Neo4j Knowledge Graph Store for code entities and relationships.
  *
- * This is the SOLUTION to the chunking problem:
- * - Stores code as a graph (classes, methods, fields as nodes)
- * - Preserves ALL relationships (extends, calls, uses, etc.)
- * - Enables structural queries like "what calls this method?"
- *
- * Combined with Pinecone (semantic search), provides complete Code RAG.
+ * CRITICAL FIX: Added null-safe parameter handling to fix Map.ofEntries() NPE
  */
 @Slf4j
 @Service
@@ -42,13 +35,15 @@ public class Neo4jGraphStore {
 
     private Driver driver;
 
+    // ================================================================
+    // LIFECYCLE MANAGEMENT
+    // ================================================================
+
     @PostConstruct
     public void init() {
         log.info("Connecting to Neo4j at: {}", neo4jUri);
         driver = GraphDatabase.driver(neo4jUri,
                 AuthTokens.basic(neo4jUsername, neo4jPassword));
-
-        // Create indexes for performance
         createIndexes();
     }
 
@@ -60,9 +55,6 @@ public class Neo4jGraphStore {
         }
     }
 
-    /**
-     * Create indexes on frequently queried properties
-     */
     private void createIndexes() {
         try (Session session = driver.session()) {
             session.run("CREATE INDEX class_fqn IF NOT EXISTS FOR (c:Class) ON (c.fullyQualifiedName)");
@@ -77,36 +69,51 @@ public class Neo4jGraphStore {
         }
     }
 
+    // ================================================================
+    // CRITICAL FIX: NULL-SAFE PARAMETER CREATION
+    // ================================================================
+
     /**
-     * Store a complete parsed code graph in Neo4j.
-     * This stores all classes, methods, fields, and their relationships.
+     * Helper method to create params map without nulls.
+     * Map.ofEntries() throws NPE on null values, this method handles it gracefully.
      */
+    private Map<String, Object> createParams(Object... keyValues) {
+        Map<String, Object> params = new HashMap<>();
+        for (int i = 0; i < keyValues.length; i += 2) {
+            String key = (String) keyValues[i];
+            Object value = keyValues[i + 1];
+
+            if (value == null) {
+                value = "";  // Neo4j handles empty strings better than nulls
+            }
+
+            params.put(key, value);
+        }
+        return params;
+    }
+
+    // ================================================================
+    // STORE METHODS
+    // ================================================================
+
     public void storeCodeGraph(ParsedCodeGraph graph) {
         log.info("Storing code graph: {} classes, {} methods, {} relationships",
                 graph.getClasses().size(), graph.getMethods().size(), graph.getTotalRelationships());
 
         try (Session session = driver.session()) {
             session.writeTransaction(tx -> {
-                // Store all classes
                 for (ClassNode classNode : graph.getClasses()) {
                     storeClassNode(tx, classNode);
                 }
-
-                // Store all methods
                 for (MethodNode methodNode : graph.getMethods()) {
                     storeMethodNode(tx, methodNode);
                 }
-
-                // Store all fields
                 for (FieldNode fieldNode : graph.getFields()) {
                     storeFieldNode(tx, fieldNode);
                 }
-
-                // Store all relationships
                 for (CodeRelationship rel : graph.getRelationships()) {
                     storeRelationship(tx, rel);
                 }
-
                 return null;
             });
 
@@ -117,9 +124,6 @@ public class Neo4jGraphStore {
         }
     }
 
-    /**
-     * Store a single class node in Neo4j
-     */
     private void storeClassNode(Transaction tx, ClassNode classNode) {
         String cypher = """
             MERGE (c:Class {id: $id})
@@ -141,32 +145,30 @@ public class Neo4jGraphStore {
                 c.javadoc = $javadoc
             """;
 
-        Map<String, Object> params = Map.ofEntries(
-                Map.entry("id", classNode.getId()),
-                Map.entry("name", classNode.getName()),
-                Map.entry("fqn", classNode.getFullyQualifiedName()),
-                Map.entry("packageName", classNode.getPackageName()),
-                Map.entry("sourceFilePath", classNode.getSourceFilePath()),
-                Map.entry("startLine", classNode.getStartLine()),
-                Map.entry("endLine", classNode.getEndLine()),
-                Map.entry("classType", classNode.getClassType().name()),
-                Map.entry("superClassName", classNode.getSuperClassName()),
-                Map.entry("interfaces", classNode.getInterfaces()),
-                Map.entry("accessModifier", classNode.getAccessModifier()),
-                Map.entry("isAbstract", classNode.isAbstract()),
-                Map.entry("isFinal", classNode.isFinal()),
-                Map.entry("isStatic", classNode.isStatic()),
-                Map.entry("annotations", classNode.getAnnotations()),
-                Map.entry("sourceCode", classNode.getSourceCode()),
-                Map.entry("javadoc", classNode.getJavadoc())
+        // CRITICAL FIX: Use createParams() instead of Map.ofEntries()
+        Map<String, Object> params = createParams(
+                "id", classNode.getId(),
+                "name", classNode.getName(),
+                "fqn", classNode.getFullyQualifiedName(),
+                "packageName", classNode.getPackageName(),
+                "sourceFilePath", classNode.getSourceFilePath(),
+                "startLine", classNode.getStartLine(),
+                "endLine", classNode.getEndLine(),
+                "classType", classNode.getClassType() != null ? classNode.getClassType().name() : "CLASS",
+                "superClassName", classNode.getSuperClassName(),
+                "interfaces", classNode.getInterfaces() != null ? classNode.getInterfaces() : Collections.emptyList(),
+                "accessModifier", classNode.getAccessModifier(),
+                "isAbstract", classNode.isAbstract(),
+                "isFinal", classNode.isFinal(),
+                "isStatic", classNode.isStatic(),
+                "annotations", classNode.getAnnotations() != null ? classNode.getAnnotations() : Collections.emptyList(),
+                "sourceCode", classNode.getSourceCode(),
+                "javadoc", classNode.getJavadoc()
         );
 
         tx.run(cypher, params);
     }
 
-    /**
-     * Store a single method node in Neo4j
-     */
     private void storeMethodNode(Transaction tx, MethodNode methodNode) {
         String cypher = """
             MERGE (m:Method {id: $id})
@@ -189,33 +191,30 @@ public class Neo4jGraphStore {
                 m.thrownExceptions = $thrownExceptions
             """;
 
-        Map<String, Object> params = Map.ofEntries(
-                Map.entry("id", methodNode.getId()),
-                Map.entry("name", methodNode.getName()),
-                Map.entry("fqn", methodNode.getFullyQualifiedName()),
-                Map.entry("className", methodNode.getClassName()),
-                Map.entry("sourceFilePath", methodNode.getSourceFilePath()),
-                Map.entry("startLine", methodNode.getStartLine()),
-                Map.entry("endLine", methodNode.getEndLine()),
-                Map.entry("returnType", methodNode.getReturnType()),
-                Map.entry("accessModifier", methodNode.getAccessModifier()),
-                Map.entry("isStatic", methodNode.isStatic()),
-                Map.entry("isFinal", methodNode.isFinal()),
-                Map.entry("isAbstract", methodNode.isAbstract()),
-                Map.entry("isSynchronized", methodNode.isSynchronized()),
-                Map.entry("isConstructor", methodNode.isConstructor()),
-                Map.entry("annotations", methodNode.getAnnotations()),
-                Map.entry("sourceCode", methodNode.getSourceCode()),
-                Map.entry("javadoc", methodNode.getJavadoc()),
-                Map.entry("thrownExceptions", methodNode.getThrownExceptions())
+        Map<String, Object> params = createParams(
+                "id", methodNode.getId(),
+                "name", methodNode.getName(),
+                "fqn", methodNode.getFullyQualifiedName(),
+                "className", methodNode.getClassName(),
+                "sourceFilePath", methodNode.getSourceFilePath(),
+                "startLine", methodNode.getStartLine(),
+                "endLine", methodNode.getEndLine(),
+                "returnType", methodNode.getReturnType(),
+                "accessModifier", methodNode.getAccessModifier(),
+                "isStatic", methodNode.isStatic(),
+                "isFinal", methodNode.isFinal(),
+                "isAbstract", methodNode.isAbstract(),
+                "isSynchronized", methodNode.isSynchronized(),
+                "isConstructor", methodNode.isConstructor(),
+                "annotations", methodNode.getAnnotations() != null ? methodNode.getAnnotations() : Collections.emptyList(),
+                "sourceCode", methodNode.getSourceCode(),
+                "javadoc", methodNode.getJavadoc(),
+                "thrownExceptions", methodNode.getThrownExceptions() != null ? methodNode.getThrownExceptions() : Collections.emptyList()
         );
 
         tx.run(cypher, params);
     }
 
-    /**
-     * Store a single field node in Neo4j
-     */
     private void storeFieldNode(Transaction tx, FieldNode fieldNode) {
         String cypher = """
             MERGE (f:Field {id: $id})
@@ -235,32 +234,28 @@ public class Neo4jGraphStore {
                 f.javadoc = $javadoc
             """;
 
-        Map<String, Object> params = Map.ofEntries(
-                Map.entry("id", fieldNode.getId()),
-                Map.entry("name", fieldNode.getName()),
-                Map.entry("fqn", fieldNode.getFullyQualifiedName()),
-                Map.entry("className", fieldNode.getClassName()),
-                Map.entry("sourceFilePath", fieldNode.getSourceFilePath()),
-                Map.entry("lineNumber", fieldNode.getLineNumber()),
-                Map.entry("type", fieldNode.getType()),
-                Map.entry("accessModifier", fieldNode.getAccessModifier()),
-                Map.entry("isStatic", fieldNode.isStatic()),
-                Map.entry("isFinal", fieldNode.isFinal()),
-                Map.entry("isTransient", fieldNode.isTransient()),
-                Map.entry("isVolatile", fieldNode.isVolatile()),
-                Map.entry("annotations", fieldNode.getAnnotations()),
-                Map.entry("initialValue", fieldNode.getInitialValue()),
-                Map.entry("javadoc", fieldNode.getJavadoc())
+        Map<String, Object> params = createParams(
+                "id", fieldNode.getId(),
+                "name", fieldNode.getName(),
+                "fqn", fieldNode.getFullyQualifiedName(),
+                "className", fieldNode.getClassName(),
+                "sourceFilePath", fieldNode.getSourceFilePath(),
+                "lineNumber", fieldNode.getLineNumber(),
+                "type", fieldNode.getType(),
+                "accessModifier", fieldNode.getAccessModifier(),
+                "isStatic", fieldNode.isStatic(),
+                "isFinal", fieldNode.isFinal(),
+                "isTransient", fieldNode.isTransient(),
+                "isVolatile", fieldNode.isVolatile(),
+                "annotations", fieldNode.getAnnotations() != null ? fieldNode.getAnnotations() : Collections.emptyList(),
+                "initialValue", fieldNode.getInitialValue(),
+                "javadoc", fieldNode.getJavadoc()
         );
 
         tx.run(cypher, params);
     }
 
-    /**
-     * Store a relationship between code entities
-     */
     private void storeRelationship(Transaction tx, CodeRelationship rel) {
-        // Create relationship with dynamic relationship type
         String cypher = String.format("""
             MATCH (from {id: $fromId})
             MATCH (to {id: $toId})
@@ -269,7 +264,7 @@ public class Neo4jGraphStore {
                 r.lineNumber = $lineNumber
             """, rel.getType().name());
 
-        Map<String, Object> params = Map.of(
+        Map<String, Object> params = createParams(
                 "fromId", rel.getFromId(),
                 "toId", rel.getToId(),
                 "sourceFile", rel.getSourceFile(),
@@ -279,18 +274,17 @@ public class Neo4jGraphStore {
         try {
             tx.run(cypher, params);
         } catch (Exception e) {
-            // Relationship may fail if target node doesn't exist (e.g., external class)
             log.debug("Failed to create relationship {} -> {}: {}", rel.getFromId(), rel.getToId(), e.getMessage());
         }
     }
 
     // ================================================================
-    // QUERY METHODS - These solve the chunking problem!
+    // QUERY METHODS - ORIGINAL SIGNATURES PRESERVED
     // ================================================================
 
     /**
      * Find all dependencies of a class.
-     * Answers: "What does PaymentService depend on?"
+     * ORIGINAL SIGNATURE - Returns List<ClassNode>
      */
     public List<ClassNode> findClassDependencies(String fullyQualifiedClassName) {
         String cypher = """
@@ -300,7 +294,7 @@ public class Neo4jGraphStore {
 
         try (Session session = driver.session()) {
             return session.readTransaction(tx -> {
-                Result result = tx.run(cypher, Map.of("fqn", fullyQualifiedClassName));
+                Result result = tx.run(cypher, Collections.singletonMap("fqn", fullyQualifiedClassName));
                 return result.stream()
                         .map(record -> nodeToClassNode(record.get("dep").asNode()))
                         .collect(Collectors.toList());
@@ -310,9 +304,7 @@ public class Neo4jGraphStore {
 
     /**
      * Find all methods that call a specific method.
-     * Answers: "What calls authenticateUser()?"
-     *
-     * THIS IS THE KEY QUERY - NO MORE CHUNKING PROBLEM!
+     * ORIGINAL SIGNATURE - Takes methodName (not FQN), Returns List<MethodNode>
      */
     public List<MethodNode> findMethodCallers(String methodName) {
         String cypher = """
@@ -323,7 +315,7 @@ public class Neo4jGraphStore {
 
         try (Session session = driver.session()) {
             return session.readTransaction(tx -> {
-                Result result = tx.run(cypher, Map.of("methodName", methodName));
+                Result result = tx.run(cypher, Collections.singletonMap("methodName", methodName));
                 return result.stream()
                         .map(record -> nodeToMethodNode(record.get("caller").asNode()))
                         .collect(Collectors.toList());
@@ -333,7 +325,7 @@ public class Neo4jGraphStore {
 
     /**
      * Find all subclasses of a class.
-     * Answers: "What extends AbstractService?"
+     * ORIGINAL SIGNATURE - Returns List<ClassNode>
      */
     public List<ClassNode> findSubclasses(String fullyQualifiedClassName) {
         String cypher = """
@@ -343,7 +335,7 @@ public class Neo4jGraphStore {
 
         try (Session session = driver.session()) {
             return session.readTransaction(tx -> {
-                Result result = tx.run(cypher, Map.of("fqn", fullyQualifiedClassName));
+                Result result = tx.run(cypher, Collections.singletonMap("fqn", fullyQualifiedClassName));
                 return result.stream()
                         .map(record -> nodeToClassNode(record.get("subclass").asNode()))
                         .collect(Collectors.toList());
@@ -353,6 +345,7 @@ public class Neo4jGraphStore {
 
     /**
      * Find all methods in a class.
+     * ORIGINAL SIGNATURE - Returns List<MethodNode>
      */
     public List<MethodNode> findMethodsInClass(String fullyQualifiedClassName) {
         String cypher = """
@@ -362,7 +355,7 @@ public class Neo4jGraphStore {
 
         try (Session session = driver.session()) {
             return session.readTransaction(tx -> {
-                Result result = tx.run(cypher, Map.of("fqn", fullyQualifiedClassName));
+                Result result = tx.run(cypher, Collections.singletonMap("fqn", fullyQualifiedClassName));
                 return result.stream()
                         .map(record -> nodeToMethodNode(record.get("m").asNode()))
                         .collect(Collectors.toList());
@@ -372,6 +365,7 @@ public class Neo4jGraphStore {
 
     /**
      * Find all fields in a class.
+     * ORIGINAL SIGNATURE - Returns List<FieldNode>
      */
     public List<FieldNode> findFieldsInClass(String fullyQualifiedClassName) {
         String cypher = """
@@ -381,7 +375,7 @@ public class Neo4jGraphStore {
 
         try (Session session = driver.session()) {
             return session.readTransaction(tx -> {
-                Result result = tx.run(cypher, Map.of("fqn", fullyQualifiedClassName));
+                Result result = tx.run(cypher, Collections.singletonMap("fqn", fullyQualifiedClassName));
                 return result.stream()
                         .map(record -> nodeToFieldNode(record.get("f").asNode()))
                         .collect(Collectors.toList());
@@ -397,7 +391,7 @@ public class Neo4jGraphStore {
 
         try (Session session = driver.session()) {
             return session.readTransaction(tx -> {
-                Result result = tx.run(cypher, Map.of("id", id));
+                Result result = tx.run(cypher, Collections.singletonMap("id", id));
                 if (result.hasNext()) {
                     return nodeToClassNode(result.single().get("c").asNode());
                 }
@@ -422,38 +416,50 @@ public class Neo4jGraphStore {
 
     private ClassNode nodeToClassNode(Node node) {
         return ClassNode.builder()
-                .id(node.get("id").asString())
-                .name(node.get("name").asString())
-                .fullyQualifiedName(node.get("fullyQualifiedName").asString())
-                .packageName(node.get("packageName").asString(""))
-                .sourceFilePath(node.get("sourceFilePath").asString(""))
-                .startLine(node.get("startLine").asInt(0))
-                .endLine(node.get("endLine").asInt(0))
-                .sourceCode(node.get("sourceCode").asString(""))
+                .id(getStringValue(node, "id"))
+                .name(getStringValue(node, "name"))
+                .fullyQualifiedName(getStringValue(node, "fullyQualifiedName"))
+                .packageName(getStringValue(node, "packageName"))
+                .sourceFilePath(getStringValue(node, "sourceFilePath"))
+                .startLine(getIntValue(node, "startLine"))
+                .endLine(getIntValue(node, "endLine"))
+                .sourceCode(getStringValue(node, "sourceCode"))
                 .build();
     }
 
     private MethodNode nodeToMethodNode(Node node) {
         return MethodNode.builder()
-                .id(node.get("id").asString())
-                .name(node.get("name").asString())
-                .fullyQualifiedName(node.get("fullyQualifiedName").asString())
-                .className(node.get("className").asString(""))
-                .sourceFilePath(node.get("sourceFilePath").asString(""))
-                .startLine(node.get("startLine").asInt(0))
-                .endLine(node.get("endLine").asInt(0))
-                .returnType(node.get("returnType").asString(""))
-                .sourceCode(node.get("sourceCode").asString(""))
+                .id(getStringValue(node, "id"))
+                .name(getStringValue(node, "name"))
+                .fullyQualifiedName(getStringValue(node, "fullyQualifiedName"))
+                .className(getStringValue(node, "className"))
+                .sourceFilePath(getStringValue(node, "sourceFilePath"))
+                .startLine(getIntValue(node, "startLine"))
+                .endLine(getIntValue(node, "endLine"))
+                .returnType(getStringValue(node, "returnType"))
+                .sourceCode(getStringValue(node, "sourceCode"))
                 .build();
     }
 
     private FieldNode nodeToFieldNode(Node node) {
         return FieldNode.builder()
-                .id(node.get("id").asString())
-                .name(node.get("name").asString())
-                .fullyQualifiedName(node.get("fullyQualifiedName").asString())
-                .className(node.get("className").asString(""))
-                .type(node.get("type").asString(""))
+                .id(getStringValue(node, "id"))
+                .name(getStringValue(node, "name"))
+                .fullyQualifiedName(getStringValue(node, "fullyQualifiedName"))
+                .className(getStringValue(node, "className"))
+                .type(getStringValue(node, "type"))
                 .build();
+    }
+
+    private String getStringValue(Node node, String key) {
+        return node.containsKey(key) && !node.get(key).isNull()
+                ? node.get(key).asString()
+                : "";
+    }
+
+    private int getIntValue(Node node, String key) {
+        return node.containsKey(key) && !node.get(key).isNull()
+                ? node.get(key).asInt()
+                : 0;
     }
 }

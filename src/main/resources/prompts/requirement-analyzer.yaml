@@ -1,5 +1,5 @@
 name: requirement-analyzer
-version: v1
+version: v2
 model: gemini-1.5-pro
 temperature: 0.3
 
@@ -8,10 +8,14 @@ systemPrompt: |
   Your job: Understand what the developer wants to accomplish.
   
   Extract:
-  - Task type (bug_fix, feature, refactor, test)
+  - Task type (documentation, bug_fix, feature, refactor, test)
   - Domain (payment, user, order, etc.)
-  - Key action verbs (add, fix, remove, refactor)
+  - Key action verbs (add, fix, remove, refactor, explain)
   - What needs clarification
+  
+  CRITICAL: Determine if user wants to:
+  - UNDERSTAND/LEARN about existing code → documentation
+  - MODIFY/CREATE code → bug_fix, feature, refactor, test
 
 userPrompt: |
   Analyze this development task:
@@ -28,17 +32,32 @@ userPrompt: |
   
   Determine:
   1. What type of task is this?
+     - "documentation" = User wants to understand/learn about code (read-only)
+     - "bug_fix" = Fix a bug or error
+     - "feature" = Add new functionality
+     - "refactor" = Improve code structure
+     - "test" = Add or modify tests
+  
   2. Which domain does it belong to?
+  
   3. What are the key actions needed?
+  
   4. What questions do you have?
+  
+  Examples:
+  - "Explain how payment processing works" → documentation
+  - "What does UserService do?" → documentation
+  - "Document the authentication flow" → documentation
+  - "Fix the NullPointerException in PaymentService" → bug_fix
+  - "Add retry logic to PaymentService" → feature
   
   Output strict JSON (no markdown):
   {
-    "taskType": "bug_fix|feature|refactor|test",
+    "taskType": "documentation|bug_fix|feature|refactor|test",
     "domain": "payment|user|order|etc",
     "summary": "One sentence summary",
     "detailedDescription": "What needs to be done",
-    "keyVerbs": ["add", "fix"],
+    "keyVerbs": ["explain", "document"] or ["add", "fix"],
     "questions": ["Question 1?", "Question 2?"],
     "confidence": 0.85
   }

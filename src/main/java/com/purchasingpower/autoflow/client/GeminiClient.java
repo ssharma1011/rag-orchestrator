@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.purchasingpower.autoflow.configuration.AppProperties;
 import com.purchasingpower.autoflow.model.llm.CodeGenerationResponse;
+import com.purchasingpower.autoflow.model.metrics.LLMCallMetrics;
+import com.purchasingpower.autoflow.service.LLMMetricsService;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,9 +17,11 @@ import reactor.util.retry.Retry;
 
 import jakarta.annotation.PostConstruct;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @Slf4j
 @Component
@@ -27,6 +31,7 @@ public class GeminiClient {
     private final AppProperties props;
     private final ObjectMapper objectMapper;
     private final PromptLibraryService promptLibrary;
+    private final LLMMetricsService llmMetricsService;
 
     private WebClient geminiWebClient;
 
@@ -148,4 +153,137 @@ public class GeminiClient {
         String content = root.path("candidates").get(0).path("content").path("parts").get(0).path("text").asText();
         return objectMapper.readValue(content, CodeGenerationResponse.class);
     }
+
+    /**
+     * Generic LLM chat call for agent prompts with full metrics tracking.
+     * Returns raw text response (not structured JSON).
+     *
+     * This method:
+     * 1. Calls Gemini API
+     * 2. Tracks metrics (tokens, cost, latency)
+     * 3. Logs request/response
+     * 4. Handles retries
+     *
+     * @param prompt The full prompt to send
+     * @param agentName Name of calling agent (for logging/metrics)
+     * @return Raw text response from LLM
+     */
+    public String callChatApi(String prompt, String agentName) {
+        return callChatApi(prompt, agentName, null);
+    }
+
+    /**
+     * Overload with conversation ID for better metrics tracking
+     */
+    public String callChatApi(String prompt, String agentName, String conversationId) {
+        log.info("═══ GEMINI API CALL [{}] ═══", agentName);
+        log.debug("Prompt length: {} chars", prompt.length());
+
+        String callId = UUID.randomUUID().toString();
+        String model = props.getGemini().getChatModel();
+        String url = getApiUrl(model, "generateContent");
+
+        Map<String, Object> body = Map.of(
+                "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
+                "generationConfig", Map.of("temperature", 0.7)
+        );
+
+        long startTime = System.currentTimeMillis();
+        LLMCallMetrics metrics = LLMCallMetrics.builder()
+                .callId(callId)
+                .agentName(agentName)
+                .conversationId(conversationId)
+                .timestamp(LocalDateTime.now())
+                .model(model)
+                .prompt(prompt)
+                .promptLength(prompt.length())
+                .temperature(0.7)
+                .build();
+
+        try {
+            String json = geminiWebClient.post().uri(url).bodyValue(body)
+                    .retrieve().bodyToMono(String.class)
+                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(10))
+                            .filter(this::isRetryable)
+                            .doBeforeRetry(signal -> {
+                                log.warn("Retrying LLM call [{}] - Attempt {}", agentName, signal.totalRetries() + 1);
+                                metrics.setRetryCount((int) signal.totalRetries() + 1);
+                            }))
+                    .block();
+
+            long latency = System.currentTimeMillis() - startTime;
+
+            JsonNode root = objectMapper.readTree(json);
+            String response = root.path("candidates").get(0)
+                    .path("content").path("parts").get(0)
+                    .path("text").asText();
+
+            // Extract token usage
+            JsonNode usageMetadata = root.path("usageMetadata");
+            int inputTokens = usageMetadata.path("promptTokenCount").asInt(0);
+            int outputTokens = usageMetadata.path("candidatesTokenCount").asInt(0);
+
+            // Complete metrics
+            metrics.setLatencyMs(latency);
+            metrics.setResponse(response);
+            metrics.setResponseLength(response.length());
+            metrics.setSuccess(true);
+            metrics.setInputTokens(inputTokens);
+            metrics.setOutputTokens(outputTokens);
+            metrics.setTotalTokens(inputTokens + outputTokens);
+            metrics.setHttpStatusCode(200);
+
+            double cost = metrics.calculateCost();
+            double tokensPerSec = metrics.calculateTokensPerSecond();
+
+            log.info("✅ LLM Response [{}]", agentName);
+            log.info("   Latency: {}ms", latency);
+            log.info("   Tokens: {} input + {} output = {} total", inputTokens, outputTokens, inputTokens + outputTokens);
+            log.info("   Cost: ${}", String.format("%.4f", cost));
+            log.info("   Throughput: {:.1f} tokens/sec", tokensPerSec);
+
+            // Record metrics (async, non-blocking)
+            if (llmMetricsService != null) {
+                llmMetricsService.recordCall(metrics);
+            }
+
+            return response;
+
+        } catch (WebClientResponseException e) {
+            long latency = System.currentTimeMillis() - startTime;
+
+            metrics.setLatencyMs(latency);
+            metrics.setSuccess(false);
+            metrics.setErrorMessage(e.getMessage());
+            metrics.setHttpStatusCode(e.getStatusCode().value());
+
+            log.error("❌ LLM Call Failed [{}]", agentName);
+            log.error("   Status: {}", e.getStatusCode());
+            log.error("   Message: {}", e.getMessage());
+
+            // Record failure metrics
+            if (llmMetricsService != null) {
+                llmMetricsService.recordCall(metrics);
+            }
+
+            throw new RuntimeException("Gemini API call failed for agent: " + agentName, e);
+
+        } catch (Exception e) {
+            long latency = System.currentTimeMillis() - startTime;
+
+            metrics.setLatencyMs(latency);
+            metrics.setSuccess(false);
+            metrics.setErrorMessage(e.getMessage());
+
+            log.error("❌ LLM Call Failed [{}]", agentName, e);
+
+            // Record failure metrics
+            if (llmMetricsService != null) {
+                llmMetricsService.recordCall(metrics);
+            }
+
+            throw new RuntimeException("Gemini API call failed for agent: " + agentName, e);
+        }
+    }
+
 }

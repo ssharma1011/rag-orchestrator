@@ -174,29 +174,45 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
     public String getLastIndexedCommit(String repoName) {
         try {
             String metadataId = METADATA_VECTOR_PREFIX + repoName + INDEX_STATE_SUFFIX;
+            log.info("🔍 Fetching metadata vector ID: {}", metadataId);
 
             // Query by ID using fetch
             var response = pineconeClient.getIndexConnection(indexName)
                     .fetch(List.of(metadataId), "");
 
-            if (response == null || response.getVectorsMap().isEmpty()) {
+            log.debug("📊 Fetch response: {}", response);
+
+            if (response == null) {
+                log.warn("⚠️ Fetch response is null");
+                return null;
+            }
+
+            if (response.getVectorsMap().isEmpty()) {
+                log.warn("⚠️ No vectors found in fetch response. Vector map is empty.");
                 return null;
             }
 
             var vector = response.getVectorsMap().get(metadataId);
             if (vector == null) {
+                log.warn("⚠️ Metadata vector with ID '{}' not found in response", metadataId);
+                log.debug("Available vector IDs: {}", response.getVectorsMap().keySet());
                 return null;
             }
 
             var metadata = vector.getMetadata().getFieldsMap();
+            log.debug("📋 Metadata fields: {}", metadata.keySet());
+
             if (metadata.containsKey("last_indexed_commit")) {
-                return metadata.get("last_indexed_commit").getStringValue();
+                String commit = metadata.get("last_indexed_commit").getStringValue();
+                log.info("✅ Found previous commit: {}", commit.substring(0, Math.min(8, commit.length())));
+                return commit;
             }
 
+            log.warn("⚠️ Metadata vector found but missing 'last_indexed_commit' field");
             return null;
 
         } catch (Exception e) {
-            log.warn("Could not fetch last indexed commit: {}", e.getMessage());
+            log.error("❌ Failed to fetch last indexed commit: {}", e.getMessage(), e);
             return null;
         }
     }
@@ -561,6 +577,7 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
     private void updateIndexState(String repoName, String commitHash, int vectorCount) {
         try {
             String metadataId = METADATA_VECTOR_PREFIX + repoName + INDEX_STATE_SUFFIX;
+            log.info("💾 Saving metadata vector ID: {}", metadataId);
 
             // Create dummy vector (Pinecone requires a vector, even for metadata)
             List<Float> dummyVector = new ArrayList<>(Collections.nCopies(EMBEDDING_DIMENSION, 0.0f));
@@ -578,6 +595,10 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
                             .setStringValue(String.valueOf(vectorCount)).build())
                     .build();
 
+            log.debug("📋 Metadata to save: repo={}, commit={}, count={}, timestamp={}",
+                    repoName, commitHash.substring(0, Math.min(8, commitHash.length())),
+                    vectorCount, Instant.now());
+
             VectorWithUnsignedIndices metadataVector = new VectorWithUnsignedIndices(
                     metadataId,
                     dummyVector,
@@ -585,12 +606,13 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
                     null
             );
 
-            pineconeClient.getIndexConnection(indexName).upsert(List.of(metadataVector), "");
-            log.debug("Updated index state: commit={}, vectors={}",
-                    commitHash.substring(0, 8), vectorCount);
+            var response = pineconeClient.getIndexConnection(indexName).upsert(List.of(metadataVector), "");
+            log.info("✅ Saved metadata vector to Pinecone. Commit: {}, Vectors: {}",
+                    commitHash.substring(0, Math.min(8, commitHash.length())), vectorCount);
+            log.debug("Upsert response: {}", response);
 
         } catch (Exception e) {
-            log.error("Failed to update index state: {}", e.getMessage());
+            log.error("❌ Failed to update index state: {}", e.getMessage(), e);
         }
     }
 

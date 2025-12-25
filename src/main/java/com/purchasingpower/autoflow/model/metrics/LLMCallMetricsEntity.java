@@ -19,8 +19,9 @@ import java.time.LocalDateTime;
 public class LLMCallMetricsEntity {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id", insertable = false, updatable = false)
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "llm_metrics_seq")
+    @SequenceGenerator(name = "llm_metrics_seq", sequenceName = "llm_metrics_seq", allocationSize = 1)
+    @Column(name = "id")
     private Long id;
 
     // ================================================================

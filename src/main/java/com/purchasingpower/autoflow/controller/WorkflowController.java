@@ -33,6 +33,9 @@ public class WorkflowController {
 
     /**
      * Start a new workflow.
+     *
+     * Returns immediately with HTTP 202 Accepted while workflow executes asynchronously.
+     * Use /status endpoint to check progress.
      */
     @PostMapping("/start")
     public ResponseEntity<WorkflowResponse> startWorkflow(@RequestBody WorkflowRequest request) {
@@ -48,8 +51,12 @@ public class WorkflowController {
                     .userId(request.getUserId())
                     .build();
 
-            WorkflowState result = workflowService.startWorkflow(initialState);
-            return ResponseEntity.ok(WorkflowResponse.fromState(result));
+            // Start workflow asynchronously - returns immediately
+            WorkflowState runningState = workflowService.startWorkflow(initialState);
+
+            // Return 202 Accepted with conversationId
+            return ResponseEntity.accepted()
+                    .body(WorkflowResponse.fromState(runningState));
 
         } catch (Exception e) {
             log.error("Failed to start workflow", e);
@@ -62,6 +69,7 @@ public class WorkflowController {
      * Respond to agent question (resume paused workflow).
      *
      * CRITICAL: Does NOT call state.addChatMessage() - creates new state instead.
+     * Returns immediately with HTTP 202 Accepted while workflow continues asynchronously.
      */
     @PostMapping("/{conversationId}/respond")
     public ResponseEntity<WorkflowResponse> respondToPrompt(
@@ -100,9 +108,12 @@ public class WorkflowController {
             // Create new state (don't modify original)
             WorkflowState updatedState = WorkflowState.fromMap(data);
 
-            // Resume workflow
-            WorkflowState result = workflowService.resumeWorkflow(updatedState);
-            return ResponseEntity.ok(WorkflowResponse.fromState(result));
+            // Resume workflow asynchronously - returns immediately
+            WorkflowState runningState = workflowService.resumeWorkflow(updatedState);
+
+            // Return 202 Accepted
+            return ResponseEntity.accepted()
+                    .body(WorkflowResponse.fromState(runningState));
 
         } catch (Exception e) {
             log.error("Failed to resume workflow", e);

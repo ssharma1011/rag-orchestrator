@@ -51,6 +51,48 @@ public class CodeIndexerAgent {
             log.info("Repository name: {}", repoName);
 
             // ================================================================
+            // OPTIMIZATION: Skip indexing for documentation if already indexed
+            // ================================================================
+
+            RequirementAnalysis analysis = state.getRequirementAnalysis();
+            boolean isDocumentationTask = analysis != null &&
+                    "documentation".equalsIgnoreCase(analysis.getTaskType());
+
+            if (isDocumentationTask) {
+                log.info("📚 Documentation request detected - checking if already indexed...");
+
+                String lastCommit = embeddingSyncService.getLastIndexedCommit(repoName);
+                if (lastCommit != null) {
+                    log.info("🚀 OPTIMIZATION: Repo already indexed at commit {}. Skipping all indexing operations! Saves ~90 seconds!",
+                            lastCommit.substring(0, Math.min(8, lastCommit.length())));
+
+                    // Still need workspace for reading files
+                    File workspace = getOrCloneWorkspace(state.getRepoUrl(), state.getBaseBranch(), repoName);
+                    updates.put("workspaceDir", workspace.getAbsolutePath());
+
+                    // Create a skipped result
+                    IndexingResult skippedResult = IndexingResult.builder()
+                            .success(true)
+                            .filesProcessed(0)
+                            .chunksCreated(0)
+                            .graphNodesCreated(0)
+                            .graphEdgesCreated(0)
+                            .indexedCommit(lastCommit)
+                            .indexType(IndexingResult.IndexType.SKIPPED)
+                            .errors(new ArrayList<>())
+                            .durationMs(0L)
+                            .build();
+
+                    updates.put("indexingResult", skippedResult);
+                    updates.put("lastAgentDecision", AgentDecision.proceed(
+                            "Using cached index (documentation request)"
+                    ));
+
+                    return updates;
+                }
+            }
+
+            // ================================================================
             // STEP 1: CLONE OR REUSE WORKSPACE
             // ================================================================
 
@@ -63,8 +105,21 @@ public class CodeIndexerAgent {
             // STEP 2: BASELINE BUILD
             // ================================================================
 
-            log.info("🔨 Running baseline build...");
-            BuildResult baseline = buildService.buildAndVerify(workspace);
+            // OPTIMIZATION: Skip build for documentation requests
+            BuildResult baseline;
+            if (isDocumentationTask) {
+                log.info("📚 Documentation request - skipping build validation (saves ~60 seconds)");
+                baseline = BuildResult.builder()
+                        .success(true)
+                        .duration(0L)
+                        .output("Build skipped for documentation request")
+                        .errors("")
+                        .build();
+            } else {
+                log.info("🔨 Running baseline build...");
+                baseline = buildService.buildAndVerify(workspace);
+            }
+
             updates.put("baselineBuild", baseline);
 
             if (!baseline.isSuccess()) {
@@ -217,6 +272,7 @@ public class CodeIndexerAgent {
 
     /**
      * Clone repository or reuse existing workspace
+     * OPTIMIZATION: Reuses workspace and just pulls instead of re-cloning
      */
     private File getOrCloneWorkspace(String repoUrl, String branch, String repoName) {
         // Define workspace location
@@ -229,11 +285,22 @@ public class CodeIndexerAgent {
             if (gitDir.exists() && gitDir.isDirectory()) {
                 log.info("✅ Reusing existing workspace: {}", workspace.getAbsolutePath());
 
-                // Pull latest changes (if Git service supports it)
+                // Pull latest changes using git command
                 try {
                     log.info("Pulling latest changes...");
-                    // TODO: Add gitService.pullLatestChanges(workspace) when method exists
-                    return workspace;
+                    ProcessBuilder pb = new ProcessBuilder("git", "pull", "origin", branch);
+                    pb.directory(workspace);
+                    pb.redirectErrorStream(true);
+
+                    Process process = pb.start();
+                    int exitCode = process.waitFor();
+
+                    if (exitCode == 0) {
+                        log.info("✅ Successfully pulled latest changes");
+                        return workspace;
+                    } else {
+                        log.warn("Git pull failed with exit code: {}", exitCode);
+                    }
                 } catch (Exception e) {
                     log.warn("Failed to pull changes: {}", e.getMessage());
                     // Fall through to re-clone

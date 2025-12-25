@@ -150,7 +150,7 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
         }
     }
 
-    @Async
+    @Async("workflowExecutor")
     protected void executeWorkflowAsync(WorkflowState state) {
         try {
             log.info("Executing workflow async: {}", state.getConversationId());

@@ -133,13 +133,39 @@ public class ScopeDiscoveryAgent {
             }
         }
 
+        // CRITICAL FILTER: Only use high-quality matches (score >= 0.7)
+        // This prevents irrelevant classes from polluting the scope
+        final double MIN_RELEVANCE_SCORE = 0.70;
+        final int MAX_CLASSES = 3;  // Limit to top 3 most relevant classes
+
+        List<PineconeRetriever.CodeContext> filteredMatches = semanticMatches.stream()
+                .filter(m -> m.score() >= MIN_RELEVANCE_SCORE)
+                .limit(10)  // Process max 10 chunks (might map to fewer classes)
+                .toList();
+
+        log.info("   🔍 Filtered to {} high-relevance matches (score >= {})",
+                filteredMatches.size(), MIN_RELEVANCE_SCORE);
+
         int pineconeMatchesFound = 0;
-        for (PineconeRetriever.CodeContext match : semanticMatches) {
+        Set<String> processedClasses = new HashSet<>();  // Track unique classes
+
+        for (PineconeRetriever.CodeContext match : filteredMatches) {
             // Pinecone stores METHOD/FIELD chunks with IDs like:
             // "repo:com.package.ClassName.methodName"
             // Neo4j stores CLASS nodes, so we need to extract the class name
 
             String className = extractClassNameFromChunkId(match.id());
+
+            // Skip if we already processed this class
+            if (className != null && processedClasses.contains(className)) {
+                log.debug("   ⏭️  Skipping duplicate class: {}", className);
+                continue;
+            }
+
+            if (processedClasses.size() >= MAX_CLASSES) {
+                log.info("   ✋ Reached maximum of {} classes, stopping", MAX_CLASSES);
+                break;
+            }
 
             if (className != null) {
                 log.debug("   Extracted class '{}' from chunk '{}'", className, match.id());
@@ -153,8 +179,9 @@ public class ScopeDiscoveryAgent {
 
                 if (!nodes.isEmpty()) {
                     candidates.addAll(nodes);
+                    processedClasses.add(className);  // Mark as processed
                     pineconeMatchesFound += nodes.size();
-                    log.debug("   ✅ Found {} Neo4j node(s) for class '{}'", nodes.size(), simpleClassName);
+                    log.info("   ✅ Added class '{}' (score: {:.2f})", simpleClassName, match.score());
                 } else {
                     log.debug("   ⚠️ No Neo4j nodes found for class '{}'", simpleClassName);
                 }
@@ -162,7 +189,9 @@ public class ScopeDiscoveryAgent {
                 log.debug("   ⚠️ Could not extract class name from chunk ID: '{}'", match.id());
             }
         }
-        log.info("   ✅ Matched {} Pinecone chunks to {} Neo4j nodes", semanticMatches.size(), pineconeMatchesFound);
+
+        log.info("   ✅ Matched {} high-relevance chunks to {} unique classes",
+                filteredMatches.size(), processedClasses.size());
 
         // Strategy 3: Expand with dependencies
         log.info("\n🔎 Strategy 3: Expanding with dependencies...");

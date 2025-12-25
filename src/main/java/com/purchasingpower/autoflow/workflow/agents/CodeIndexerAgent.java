@@ -54,46 +54,57 @@ public class CodeIndexerAgent {
             log.info("Repository name: {}", repoName);
 
             // ================================================================
-            // OPTIMIZATION: Skip indexing for documentation if already indexed
+            // CRITICAL OPTIMIZATION: Skip indexing if already indexed at current commit
+            // ================================================================
+
+            // Check current commit in repo (before cloning)
+            String currentCommit = getCurrentCommitFromRemote(state.getRepoUrl(), state.getBaseBranch());
+            String lastIndexedCommit = embeddingSyncService.getLastIndexedCommit(repoName);
+
+            if (lastIndexedCommit != null && lastIndexedCommit.equals(currentCommit)) {
+                log.info("🚀 OPTIMIZATION: Repository already indexed at current commit {}!",
+                        currentCommit.substring(0, 8));
+                log.info("   ⏭️  Skipping: Clone, Build, Re-indexing");
+                log.info("   💰 Time saved: ~120 seconds");
+
+                // Still need workspace for reading files during code generation
+                File workspace = getOrCloneWorkspace(state.getRepoUrl(), state.getBaseBranch(), repoName);
+                updates.put("workspaceDir", workspace.getAbsolutePath());
+
+                // Create a skipped result
+                IndexingResult skippedResult = IndexingResult.builder()
+                        .success(true)
+                        .filesProcessed(0)
+                        .chunksCreated(0)
+                        .graphNodesCreated(0)
+                        .graphEdgesCreated(0)
+                        .indexedCommit(lastIndexedCommit)
+                        .indexType(IndexingResult.IndexType.SKIPPED)
+                        .errors(new ArrayList<>())
+                        .durationMs(0L)
+                        .build();
+
+                updates.put("indexingResult", skippedResult);
+                updates.put("lastAgentDecision", AgentDecision.proceed(
+                        "Using cached index - no code changes since last indexing"
+                ));
+
+                return updates;
+            }
+
+            log.info("📥 New commit detected or first index - proceeding with full indexing");
+            if (lastIndexedCommit != null) {
+                log.info("   Previous: {}", lastIndexedCommit.substring(0, 8));
+                log.info("   Current:  {}", currentCommit.substring(0, 8));
+            }
+
+            // ================================================================
+            // OPTIMIZATION: Skip build for documentation tasks
             // ================================================================
 
             RequirementAnalysis analysis = state.getRequirementAnalysis();
             boolean isDocumentationTask = analysis != null &&
                     "documentation".equalsIgnoreCase(analysis.getTaskType());
-
-            if (isDocumentationTask) {
-                log.info("📚 Documentation request detected - checking if already indexed...");
-
-                String lastCommit = embeddingSyncService.getLastIndexedCommit(repoName);
-                if (lastCommit != null) {
-                    log.info("🚀 OPTIMIZATION: Repo already indexed at commit {}. Skipping all indexing operations! Saves ~90 seconds!",
-                            lastCommit.substring(0, Math.min(8, lastCommit.length())));
-
-                    // Still need workspace for reading files
-                    File workspace = getOrCloneWorkspace(state.getRepoUrl(), state.getBaseBranch(), repoName);
-                    updates.put("workspaceDir", workspace.getAbsolutePath());
-
-                    // Create a skipped result
-                    IndexingResult skippedResult = IndexingResult.builder()
-                            .success(true)
-                            .filesProcessed(0)
-                            .chunksCreated(0)
-                            .graphNodesCreated(0)
-                            .graphEdgesCreated(0)
-                            .indexedCommit(lastCommit)
-                            .indexType(IndexingResult.IndexType.SKIPPED)
-                            .errors(new ArrayList<>())
-                            .durationMs(0L)
-                            .build();
-
-                    updates.put("indexingResult", skippedResult);
-                    updates.put("lastAgentDecision", AgentDecision.proceed(
-                            "Using cached index (documentation request)"
-                    ));
-
-                    return updates;
-                }
-            }
 
             // ================================================================
             // STEP 1: CLONE OR REUSE WORKSPACE
@@ -393,6 +404,39 @@ public class CodeIndexerAgent {
         // Clone fresh
         log.info("🔄 Cloning repository...");
         return gitService.cloneRepository(repoUrl, branch);
+    }
+
+    /**
+     * Get current commit hash from remote repository without cloning.
+     * Uses git ls-remote to query the remote HEAD.
+     */
+    private String getCurrentCommitFromRemote(String repoUrl, String branch) {
+        try {
+            log.debug("Querying remote commit for branch: {}", branch);
+            ProcessBuilder pb = new ProcessBuilder(
+                    "git", "ls-remote", repoUrl, "refs/heads/" + branch
+            );
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(process.getInputStream()))) {
+                String line = reader.readLine();
+                if (line != null && line.length() >= 40) {
+                    String commit = line.substring(0, 40);
+                    log.debug("Remote HEAD at: {}", commit.substring(0, 8));
+                    return commit;
+                }
+            }
+
+            process.waitFor();
+            log.warn("Could not determine remote commit, will proceed with full index");
+            return null;
+
+        } catch (Exception e) {
+            log.warn("Failed to query remote commit: {}", e.getMessage());
+            return null;  // Fail safe - proceed with full index if can't check
+        }
     }
 
     /**

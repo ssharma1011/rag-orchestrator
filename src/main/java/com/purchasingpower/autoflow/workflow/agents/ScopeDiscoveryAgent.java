@@ -135,15 +135,34 @@ public class ScopeDiscoveryAgent {
 
         int pineconeMatchesFound = 0;
         for (PineconeRetriever.CodeContext match : semanticMatches) {
-            Optional<GraphNode> nodeOpt = graphRepo.findByNodeId(match.id());
-            if (nodeOpt.isPresent()) {
-                candidates.add(nodeOpt.get());
-                pineconeMatchesFound++;
+            // Pinecone stores METHOD/FIELD chunks with IDs like:
+            // "repo:com.package.ClassName.methodName"
+            // Neo4j stores CLASS nodes, so we need to extract the class name
+
+            String className = extractClassNameFromChunkId(match.id());
+
+            if (className != null) {
+                log.debug("   Extracted class '{}' from chunk '{}'", className, match.id());
+
+                // Find by simple class name in Neo4j
+                String simpleClassName = className.substring(className.lastIndexOf('.') + 1);
+
+                List<GraphNode> nodes = graphRepo.findByRepoName(repoName).stream()
+                        .filter(n -> simpleClassName.equals(n.getSimpleName()))
+                        .toList();
+
+                if (!nodes.isEmpty()) {
+                    candidates.addAll(nodes);
+                    pineconeMatchesFound += nodes.size();
+                    log.debug("   ✅ Found {} Neo4j node(s) for class '{}'", nodes.size(), simpleClassName);
+                } else {
+                    log.debug("   ⚠️ No Neo4j nodes found for class '{}'", simpleClassName);
+                }
             } else {
-                log.debug("   ⚠️ Pinecone match '{}' not found in Neo4j", match.id());
+                log.debug("   ⚠️ Could not extract class name from chunk ID: '{}'", match.id());
             }
         }
-        log.info("   ✅ Matched {} Pinecone results to Neo4j nodes", pineconeMatchesFound);
+        log.info("   ✅ Matched {} Pinecone chunks to {} Neo4j nodes", semanticMatches.size(), pineconeMatchesFound);
 
         // Strategy 3: Expand with dependencies
         log.info("\n🔎 Strategy 3: Expanding with dependencies...");
@@ -246,6 +265,51 @@ public class ScopeDiscoveryAgent {
                     .className(node.getFullyQualifiedName()).reason("Required").build());
         }
         return proposal;
+    }
+
+    /**
+     * Extract class name from Pinecone chunk ID.
+     * Format: "repo:com.package.ClassName.methodName" → "com.package.ClassName"
+     * Format: "repo:com.package.ClassName" → "com.package.ClassName"
+     */
+    private String extractClassNameFromChunkId(String chunkId) {
+        try {
+            // Remove repo prefix: "repo:com.package.ClassName.methodName"
+            if (!chunkId.contains(":")) {
+                return null;
+            }
+
+            String afterRepo = chunkId.substring(chunkId.indexOf(':') + 1);
+
+            // Handle different formats:
+            // - "com.package.ClassName" (class chunk)
+            // - "com.package.ClassName.methodName" (method chunk)
+            // - "com.package.ClassName.fieldName_field" (field chunk)
+
+            // Split by dots and remove last part if it's a method/field name
+            String[] parts = afterRepo.split("\\.");
+
+            if (parts.length < 2) {
+                return null; // Invalid format
+            }
+
+            // Check if last part looks like a method/field (lowercase or ends with _field)
+            String lastPart = parts[parts.length - 1];
+            boolean isMethodOrField = Character.isLowerCase(lastPart.charAt(0)) ||
+                    lastPart.endsWith("_field");
+
+            if (isMethodOrField) {
+                // Remove last part to get class name
+                return String.join(".", java.util.Arrays.copyOf(parts, parts.length - 1));
+            } else {
+                // It's already a class name
+                return afterRepo;
+            }
+
+        } catch (Exception e) {
+            log.debug("Failed to extract class name from chunk ID: {}", chunkId, e);
+            return null;
+        }
     }
 
     private String extractRepoName(String repoUrl) {

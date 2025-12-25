@@ -7,42 +7,35 @@ import com.purchasingpower.autoflow.workflow.AutoFlowWorkflow;
 import com.purchasingpower.autoflow.workflow.state.AgentDecision;
 import com.purchasingpower.autoflow.workflow.state.WorkflowState;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.scheduling.annotation.Async;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 
 /**
- * FIXED: Uses self-injection to make @Async work correctly.
- * Spring AOP requires calling through proxy for @Async to work.
+ * FIXED: Uses direct executor injection instead of @Async.
+ * Submits tasks directly to thread pool - no AOP, no proxies, no issues!
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
 
     private final AutoFlowWorkflow autoFlowWorkflow;
     private final WorkflowStateRepository stateRepository;
     private final ObjectMapper objectMapper;
 
-    // Self-injection to get the proxied version for @Async
-    @Autowired
-    private WorkflowExecutionService self;
+    // Direct injection of the async executor - much simpler than @Async!
+    @Qualifier("workflowExecutor")
+    private final Executor workflowExecutor;
 
     private final ConcurrentHashMap<String, WorkflowState> activeWorkflows = new ConcurrentHashMap<>();
-
-    public WorkflowExecutionServiceImpl(
-            AutoFlowWorkflow autoFlowWorkflow,
-            WorkflowStateRepository stateRepository,
-            ObjectMapper objectMapper) {
-        this.autoFlowWorkflow = autoFlowWorkflow;
-        this.stateRepository = stateRepository;
-        this.objectMapper = objectMapper;
-    }
 
     @Override
     public WorkflowState startWorkflow(WorkflowState initialState) {
@@ -68,9 +61,9 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
             // Cache it
             activeWorkflows.put(runningState.getConversationId(), runningState);
 
-            // Execute workflow asynchronously using self (proxy) for @Async to work
-            log.info("🚀 Calling async execution through proxy...");
-            self.executeWorkflowAsync(runningState);
+            // Submit workflow execution to async thread pool - returns immediately!
+            log.info("🚀 Submitting workflow to async executor...");
+            workflowExecutor.execute(() -> executeWorkflow(runningState));
 
             return runningState;
 
@@ -96,9 +89,9 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
             // Update cache
             activeWorkflows.put(runningState.getConversationId(), runningState);
 
-            // Continue execution asynchronously using self (proxy) for @Async to work
-            log.info("🚀 Resuming async execution through proxy...");
-            self.executeWorkflowAsync(runningState);
+            // Resume workflow execution in async thread pool - returns immediately!
+            log.info("🚀 Resuming workflow in async executor...");
+            workflowExecutor.execute(() -> executeWorkflow(runningState));
 
             return runningState;
 
@@ -163,10 +156,14 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
         }
     }
 
-    @Async("workflowExecutor")
-    public void executeWorkflowAsync(WorkflowState state) {
+    /**
+     * Execute workflow in background thread.
+     * Called via workflowExecutor.execute() - runs in thread pool.
+     */
+    private void executeWorkflow(WorkflowState state) {
         try {
-            log.info("🚀 [ASYNC THREAD] Executing workflow async: {}", state.getConversationId());
+            log.info("🚀 [ASYNC THREAD {}] Executing workflow: {}",
+                    Thread.currentThread().getName(), state.getConversationId());
 
             // Execute the LangGraph4j workflow
             WorkflowState result = autoFlowWorkflow.execute(state);

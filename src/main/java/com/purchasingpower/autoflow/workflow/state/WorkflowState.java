@@ -97,7 +97,19 @@ public class WorkflowState extends AgentState {
     }
 
     public File getWorkspaceDir() {
-        return this.<File>value("workspaceDir").orElse(null);
+        Object value = data().get("workspaceDir");
+        if (value == null) return null;
+        if (value instanceof File) return (File) value;
+        if (value instanceof String) return new File((String) value);  // ← Handle String!
+        return null;
+    }
+
+    public void setWorkspaceDir(File dir) {
+        if (dir != null) {
+            data().put("workspaceDir", dir.getAbsolutePath());  // ← Store as String
+        } else {
+            data().put("workspaceDir", null);
+        }
     }
 
     // ================================================================

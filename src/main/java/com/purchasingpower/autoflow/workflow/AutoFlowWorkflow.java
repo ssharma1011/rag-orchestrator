@@ -72,7 +72,18 @@ public class AutoFlowWorkflow {
         graph.addConditionalEdges("requirement_analyzer",
                 edge_async(s -> {
                     RequirementAnalysis analysis = s.getRequirementAnalysis();
-                    if (analysis != null && "DOCUMENTATION".equals(analysis.getTaskType())) {
+
+                    log.info("═══════════════════════════════════════════════════════");
+                    log.info("🔀 ROUTING FROM REQUIREMENT_ANALYZER:");
+                    log.info("   Analysis exists: {}", analysis != null);
+                    if (analysis != null) {
+                        log.info("   taskType: '{}'", analysis.getTaskType());
+                        log.info("   Checking: 'DOCUMENTATION'.equals('{}')", analysis.getTaskType());
+                        log.info("   Match: {}", "DOCUMENTATION".equals(analysis.getTaskType()));
+                    }
+                    log.info("═══════════════════════════════════════════════════════");
+
+                    if (analysis != null && "DOCUMENTATION".equalsIgnoreCase(analysis.getTaskType())) {
                         log.info("📚 Routing to documentation agent");
                         return "code_indexer";  // Still need to index first!
                     }
@@ -92,9 +103,17 @@ public class AutoFlowWorkflow {
         graph.addConditionalEdges("code_indexer",
                 edge_async(s -> {
                     RequirementAnalysis analysis = s.getRequirementAnalysis();
-
+                    log.info("═══════════════════════════════════════════════════════");
+                    log.info("🔀 ROUTING FROM CODE_INDEXER:");
+                    log.info("   Analysis exists: {}", analysis != null);
+                    if (analysis != null) {
+                        log.info("   taskType: '{}'", analysis.getTaskType());
+                        log.info("   Checking: 'DOCUMENTATION'.equals('{}')", analysis.getTaskType());
+                        log.info("   Match: {}", "DOCUMENTATION".equals(analysis.getTaskType()));
+                    }
+                    log.info("═══════════════════════════════════════════════════════");
                     // NEW: If documentation request, route to documentation agent
-                    if (analysis != null && "DOCUMENTATION".equals(analysis.getTaskType())) {
+                    if (analysis != null && "DOCUMENTATION".equalsIgnoreCase(analysis.getTaskType())) {
                         log.info("📚 Routing to documentation agent after indexing");
                         return "documentation_agent";
                     }

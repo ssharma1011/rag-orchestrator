@@ -33,7 +33,6 @@ public class RequirementAnalyzerAgent {
         log.info("🔍 Analyzing requirement: {}", state.getRequirement());
 
         try {
-            // CRITICAL FIX: Check if already analyzed
             RequirementAnalysis existingAnalysis = state.getRequirementAnalysis();
             List<ChatMessage> conversationHistory = state.getConversationHistory();
 
@@ -42,7 +41,6 @@ public class RequirementAnalyzerAgent {
                     conversationHistory.get(conversationHistory.size() - 1)
                             .getRole().equals("user");
 
-            // If already analyzed AND user just responded to our questions → PROCEED
             if (existingAnalysis != null && userJustResponded) {
                 log.info("✅ User provided clarification. Proceeding with existing analysis.");
                 log.info("   - Task Type: {}", existingAnalysis.getTaskType());
@@ -136,7 +134,23 @@ public class RequirementAnalyzerAgent {
                     .replaceAll("```", "")
                     .trim();
 
-            return objectMapper.readValue(cleanJson, RequirementAnalysis.class);
+            log.info("═══════════════════════════════════════════════════════");
+            log.info("🔍 RAW LLM RESPONSE FROM REQUIREMENT ANALYZER:");
+            log.info(llmResponse);
+            log.info("═══════════════════════════════════════════════════════");
+
+
+            RequirementAnalysis analysis = objectMapper.readValue(cleanJson, RequirementAnalysis.class);
+            log.info("📊 PARSED RequirementAnalysis:");
+            log.info("   taskType: '{}'", analysis.getTaskType());
+            log.info("   domain: '{}'", analysis.getDomain());
+            log.info("   summary: '{}'", analysis.getSummary());
+            log.info("   confidence: {}", analysis.getConfidence());
+            log.info("   questions: {}", analysis.getQuestions());
+            log.info("═══════════════════════════════════════════════════════");
+
+
+            return analysis;
 
         } catch (Exception e) {
             log.error("Failed to parse LLM response: {}", llmResponse, e);

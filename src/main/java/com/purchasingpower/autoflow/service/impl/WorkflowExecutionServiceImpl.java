@@ -151,9 +151,9 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
     }
 
     @Async("workflowExecutor")
-    protected void executeWorkflowAsync(WorkflowState state) {
+    public void executeWorkflowAsync(WorkflowState state) {
         try {
-            log.info("Executing workflow async: {}", state.getConversationId());
+            log.info("🚀 [ASYNC THREAD] Executing workflow async: {}", state.getConversationId());
 
             // Execute the LangGraph4j workflow
             WorkflowState result = autoFlowWorkflow.execute(state);

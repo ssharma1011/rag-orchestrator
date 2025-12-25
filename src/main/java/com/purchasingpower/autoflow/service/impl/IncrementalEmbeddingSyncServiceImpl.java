@@ -429,16 +429,39 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
     }
 
     /**
-     * Deletes all vectors for a repository (including metadata vector).
+     * Deletes all CODE vectors for a repository.
+     * IMPORTANT: Does NOT delete metadata vector (preserves index state).
      */
     private void deleteAllVectorsForRepo(String repoName) {
         try {
-            // Delete code vectors
+            log.info("🗑️ Deleting all CODE vectors for repo: {} (preserving metadata)", repoName);
+
+            // Delete ONLY code vectors (exclude metadata by filtering on type != INDEX_METADATA)
+            // Build filter: repo_name = repoName AND type != "INDEX_METADATA"
             Struct filter = Struct.newBuilder()
-                    .putFields("repo_name", Value.newBuilder()
-                            .setStructValue(Struct.newBuilder()
-                                    .putFields("$eq", Value.newBuilder()
-                                            .setStringValue(repoName)
+                    .putFields("$and", Value.newBuilder()
+                            .setListValue(com.google.protobuf.ListValue.newBuilder()
+                                    .addValues(Value.newBuilder()
+                                            .setStructValue(Struct.newBuilder()
+                                                    .putFields("repo_name", Value.newBuilder()
+                                                            .setStructValue(Struct.newBuilder()
+                                                                    .putFields("$eq", Value.newBuilder()
+                                                                            .setStringValue(repoName)
+                                                                            .build())
+                                                                    .build())
+                                                            .build())
+                                                    .build())
+                                            .build())
+                                    .addValues(Value.newBuilder()
+                                            .setStructValue(Struct.newBuilder()
+                                                    .putFields("type", Value.newBuilder()
+                                                            .setStructValue(Struct.newBuilder()
+                                                                    .putFields("$ne", Value.newBuilder()
+                                                                            .setStringValue("INDEX_METADATA")
+                                                                            .build())
+                                                                    .build())
+                                                            .build())
+                                                    .build())
                                             .build())
                                     .build())
                             .build())
@@ -446,14 +469,10 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
 
             pineconeClient.getIndexConnection(indexName).deleteByFilter(filter, "");
 
-            // Also delete the metadata vector
-            String metadataId = METADATA_VECTOR_PREFIX + repoName + INDEX_STATE_SUFFIX;
-            pineconeClient.getIndexConnection(indexName).deleteByIds(List.of(metadataId), "");
-
-            log.info("Deleted all vectors for repo: {}", repoName);
+            log.info("✅ Deleted all code vectors for repo: {} (metadata preserved)", repoName);
 
         } catch (Exception e) {
-            log.error("Failed to delete vectors for repo: {}", e.getMessage());
+            log.error("❌ Failed to delete vectors for repo: {}", e.getMessage());
         }
     }
 

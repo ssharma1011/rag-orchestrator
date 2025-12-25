@@ -76,32 +76,108 @@ public class ScopeDiscoveryAgent {
     private List<GraphNode> findCandidateClasses(RequirementAnalysis req, String repoName) {
         Set<GraphNode> candidates = new HashSet<>();
 
+        log.info("════════════════════════════════════════════════════════════");
+        log.info("🔍 SCOPE DISCOVERY - Finding Candidate Classes");
+        log.info("════════════════════════════════════════════════════════════");
+        log.info("📋 Requirement: {}", req.getSummary());
+        log.info("🏷️  Extracted Domain: {}", req.getDomain());
+        log.info("📦 Repository: {}", repoName);
+
+        // Strategy 1: Domain-based search
         if (req.getDomain() != null && !req.getDomain().isEmpty()) {
-            List<GraphNode> domainClasses = graphRepo.findByRepoName(repoName).stream()
+            log.info("\n🔎 Strategy 1: Searching by domain '{}'...", req.getDomain());
+
+            List<GraphNode> allNodes = graphRepo.findByRepoName(repoName);
+            log.info("   Total nodes in repo: {}", allNodes.size());
+
+            // Log sample of domains to debug
+            Map<String, Long> domainCounts = allNodes.stream()
+                    .filter(n -> n.getDomain() != null)
+                    .collect(java.util.stream.Collectors.groupingBy(
+                            GraphNode::getDomain,
+                            java.util.stream.Collectors.counting()));
+            log.info("   Available domains in repo: {}", domainCounts);
+
+            List<GraphNode> domainClasses = allNodes.stream()
                     .filter(node -> req.getDomain().equalsIgnoreCase(node.getDomain()))
                     .toList();
+            log.info("   ✅ Found {} classes with domain '{}'", domainClasses.size(), req.getDomain());
+
+            if (!domainClasses.isEmpty()) {
+                log.info("   Sample matches: {}", domainClasses.stream()
+                        .limit(5)
+                        .map(GraphNode::getSimpleName)
+                        .toList());
+            }
+
             candidates.addAll(domainClasses);
         }
 
+        // Strategy 2: Semantic search in Pinecone
+        log.info("\n🔎 Strategy 2: Semantic search in Pinecone...");
+        log.info("   Embedding requirement: '{}'", req.getSummary());
+
         List<Double> requirementEmbedding = geminiClient.createEmbedding(req.getSummary());
+        log.info("   ✅ Created embedding vector (dimension: {})", requirementEmbedding.size());
+
         List<PineconeRetriever.CodeContext> semanticMatches =
                 pineconeRetriever.findRelevantCodeStructured(requirementEmbedding, repoName);
+        log.info("   ✅ Pinecone returned {} semantic matches", semanticMatches.size());
 
-        for (PineconeRetriever.CodeContext match : semanticMatches) {
-            graphRepo.findByNodeId(match.id()).ifPresent(candidates::add);
+        if (!semanticMatches.isEmpty()) {
+            log.info("   Top matches from Pinecone:");
+            for (int i = 0; i < Math.min(5, semanticMatches.size()); i++) {
+                PineconeRetriever.CodeContext match = semanticMatches.get(i);
+                log.info("      {}. {} (score: {}, class: {})",
+                        i+1, match.id(), match.score(), match.className());
+            }
         }
+
+        int pineconeMatchesFound = 0;
+        for (PineconeRetriever.CodeContext match : semanticMatches) {
+            Optional<GraphNode> nodeOpt = graphRepo.findByNodeId(match.id());
+            if (nodeOpt.isPresent()) {
+                candidates.add(nodeOpt.get());
+                pineconeMatchesFound++;
+            } else {
+                log.debug("   ⚠️ Pinecone match '{}' not found in Neo4j", match.id());
+            }
+        }
+        log.info("   ✅ Matched {} Pinecone results to Neo4j nodes", pineconeMatchesFound);
+
+        // Strategy 3: Expand with dependencies
+        log.info("\n🔎 Strategy 3: Expanding with dependencies...");
+        log.info("   Starting with {} candidates", candidates.size());
 
         Set<GraphNode> expanded = new HashSet<>(candidates);
         for (GraphNode candidate : candidates) {
             List<String> deps = graphTraversal.findDirectDependencies(candidate.getNodeId(), repoName);
+            log.debug("   {} has {} dependencies", candidate.getSimpleName(), deps.size());
+
             for (String depId : deps) {
                 graphRepo.findByNodeId(depId).ifPresent(dep -> {
                     if (req.getDomain() != null && req.getDomain().equals(dep.getDomain())) {
                         expanded.add(dep);
+                        log.debug("   Added dependency: {}", dep.getSimpleName());
                     }
                 });
             }
         }
+
+        log.info("   ✅ After expansion: {} total candidates", expanded.size());
+
+        log.info("\n📊 FINAL RESULTS:");
+        log.info("   Total candidates found: {}", expanded.size());
+        if (!expanded.isEmpty()) {
+            log.info("   Candidates:");
+            expanded.stream()
+                    .limit(10)
+                    .forEach(node -> log.info("      - {} ({})", node.getSimpleName(), node.getFilePath()));
+            if (expanded.size() > 10) {
+                log.info("      ... and {} more", expanded.size() - 10);
+            }
+        }
+        log.info("════════════════════════════════════════════════════════════\n");
 
         return new ArrayList<>(expanded);
     }

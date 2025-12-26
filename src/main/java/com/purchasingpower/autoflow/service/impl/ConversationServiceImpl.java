@@ -36,7 +36,9 @@ public class ConversationServiceImpl implements ConversationService {
     @Override
     @Transactional
     public Conversation createConversation(String conversationId, String userId, String repoUrl) {
-        log.info("Creating conversation: {} for user: {}", conversationId, userId);
+        // Default to "anonymous" if userId is null
+        String effectiveUserId = (userId != null && !userId.trim().isEmpty()) ? userId : "anonymous";
+        log.info("Creating conversation: {} for user: {}", conversationId, effectiveUserId);
 
         String repoName = null;
         if (repoUrl != null && !repoUrl.trim().isEmpty()) {
@@ -49,7 +51,7 @@ public class ConversationServiceImpl implements ConversationService {
 
         Conversation conversation = Conversation.builder()
                 .conversationId(conversationId)
-                .userId(userId)
+                .userId(effectiveUserId)
                 .repoUrl(repoUrl)
                 .repoName(repoName)
                 .mode(Conversation.ConversationMode.IMPLEMENT)  // Default mode

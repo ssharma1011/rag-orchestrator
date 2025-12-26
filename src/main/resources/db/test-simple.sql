@@ -1,0 +1,8 @@
+-- Simplest possible CREATE TABLE test
+CREATE TABLE CONVERSATIONS (
+    conversation_id VARCHAR2(100) PRIMARY KEY
+);
+
+SELECT table_name FROM user_tables WHERE table_name = 'CONVERSATIONS';
+
+DROP TABLE CONVERSATIONS CASCADE CONSTRAINTS;

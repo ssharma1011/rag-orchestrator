@@ -54,22 +54,33 @@ public class CodeIndexerAgent {
             log.info("Repository name: {}", repoName);
 
             // ================================================================
-            // CRITICAL OPTIMIZATION: Skip indexing if already indexed at current commit
+            // ENTERPRISE OPTIMIZATION: Conversation-scoped workspace caching
             // ================================================================
+
+            String conversationId = state.getConversationId();
+            if (conversationId == null || conversationId.trim().isEmpty()) {
+                log.warn("No conversationId provided, using 'default'");
+                conversationId = "default";
+            }
+
+            // Check if workspace already exists for this conversation
+            File conversationWorkspace = getConversationWorkspace(repoName, conversationId);
+            boolean workspaceExists = conversationWorkspace.exists() &&
+                                     gitService.isValidGitRepository(conversationWorkspace);
 
             // Check current commit in repo (before cloning)
             String currentCommit = getCurrentCommitFromRemote(state.getRepoUrl(), state.getBaseBranch());
             String lastIndexedCommit = embeddingSyncService.getLastIndexedCommit(repoName);
 
-            if (lastIndexedCommit != null && lastIndexedCommit.equals(currentCommit)) {
-                log.info("🚀 OPTIMIZATION: Repository already indexed at current commit {}!",
-                        currentCommit.substring(0, 8));
-                log.info("   ⏭️  Skipping: Clone, Build, Re-indexing");
+            // ULTIMATE OPTIMIZATION: Skip everything if workspace exists AND commit unchanged
+            if (workspaceExists && lastIndexedCommit != null && lastIndexedCommit.equals(currentCommit)) {
+                log.info("🚀 ULTIMATE OPTIMIZATION: Workspace exists + No commit changes!");
+                log.info("   📁 Workspace: {}", conversationWorkspace.getName());
+                log.info("   📌 Commit: {}", currentCommit.substring(0, 8));
+                log.info("   ⏭️  Skipping: Clone, Pull, Build, Re-indexing");
                 log.info("   💰 Time saved: ~120 seconds");
 
-                // Still need workspace for reading files during code generation
-                File workspace = getOrCloneWorkspace(state.getRepoUrl(), state.getBaseBranch(), repoName);
-                updates.put("workspaceDir", workspace.getAbsolutePath());
+                updates.put("workspaceDir", conversationWorkspace.getAbsolutePath());
 
                 // Create a skipped result
                 IndexingResult skippedResult = IndexingResult.builder()
@@ -107,10 +118,10 @@ public class CodeIndexerAgent {
                     "documentation".equalsIgnoreCase(analysis.getTaskType());
 
             // ================================================================
-            // STEP 1: CLONE OR REUSE WORKSPACE
+            // STEP 1: CLONE OR REUSE CONVERSATION WORKSPACE
             // ================================================================
 
-            File workspace = getOrCloneWorkspace(state.getRepoUrl(), state.getBaseBranch(), repoName);
+            File workspace = getOrCloneWorkspace(state.getRepoUrl(), state.getBaseBranch(), repoName, conversationId);
             updates.put("workspaceDir", workspace.getAbsolutePath());  // CRITICAL: Store as String!
 
             log.info("✅ Workspace ready: {}", workspace.getAbsolutePath());
@@ -364,45 +375,83 @@ public class CodeIndexerAgent {
     }
 
     /**
-     * Clone repository or reuse existing workspace
-     * OPTIMIZATION: Reuses workspace and just pulls instead of re-cloning
+     * Get conversation-scoped workspace directory.
+     * ENTERPRISE: Isolates workspaces by conversation to prevent conflicts.
+     *
+     * @param repoName Repository name
+     * @param conversationId Unique conversation identifier
+     * @return Workspace directory for this conversation
      */
-    private File getOrCloneWorkspace(String repoUrl, String branch, String repoName) {
-        // Define workspace location - CONSISTENT directory based on repo name
+    private File getConversationWorkspace(String repoName, String conversationId) {
         String workspaceBase = System.getProperty("user.home") + "/ai-workspace";
-        File workspace = new File(workspaceBase, repoName);
+        return new File(workspaceBase + "/" + repoName + "/" + conversationId);
+    }
+
+    /**
+     * Clone repository or reuse existing conversation workspace.
+     * ENTERPRISE OPTIMIZATION: Conversation-scoped isolation + smart sync.
+     *
+     * Strategy:
+     * 1. If workspace exists → Force sync with remote (git fetch + reset --hard)
+     * 2. If doesn't exist → Clone fresh
+     *
+     * Uses force sync instead of pull to avoid merge conflicts from:
+     * - Leftover uncommitted changes from failed runs
+     * - AI branches not yet pushed
+     * - Concurrent modifications
+     *
+     * Safe because:
+     * - Workspace is isolated per conversation
+     * - Real work goes to AI branches which are pushed immediately
+     * - Any uncommitted changes are from failed runs (safe to discard)
+     */
+    private File getOrCloneWorkspace(String repoUrl, String branch, String repoName, String conversationId) {
+        // Define conversation-scoped workspace
+        File workspace = getConversationWorkspace(repoName, conversationId);
 
         // Check if workspace exists and is valid Git repo
-        if (workspace.exists() && workspace.isDirectory()) {
-            File gitDir = new File(workspace, ".git");
-            if (gitDir.exists() && gitDir.isDirectory()) {
-                log.info("✅ Reusing existing workspace: {}", workspace.getAbsolutePath());
+        if (workspace.exists() && workspace.isDirectory() && gitService.isValidGitRepository(workspace)) {
+            log.info("✅ Reusing conversation workspace: {}", workspace.getAbsolutePath());
 
-                // Pull latest changes using git command
-                try {
-                    log.info("Pulling latest changes from origin/{} ...", branch);
-                    ProcessBuilder pb = new ProcessBuilder("git", "pull", "origin", branch);
-                    pb.directory(workspace);
-                    pb.redirectErrorStream(true);
+            // FORCE SYNC: Fetch + reset --hard to avoid merge conflicts
+            try {
+                log.info("Force syncing with origin/{} ...", branch);
 
-                    Process process = pb.start();
-                    int exitCode = process.waitFor();
+                // Step 1: Fetch latest from remote
+                ProcessBuilder fetchPb = new ProcessBuilder("git", "fetch", "origin", branch);
+                fetchPb.directory(workspace);
+                fetchPb.redirectErrorStream(true);
+                Process fetchProcess = fetchPb.start();
+                int fetchExitCode = fetchProcess.waitFor();
 
-                    if (exitCode == 0) {
-                        log.info("✅ Successfully pulled latest changes");
-                        return workspace;
-                    } else {
-                        log.warn("Git pull failed with exit code: {}", exitCode);
-                    }
-                } catch (Exception e) {
-                    log.warn("Failed to pull changes: {}", e.getMessage());
-                    // Fall through to re-clone
+                if (fetchExitCode != 0) {
+                    log.warn("Git fetch failed with exit code: {}, will re-clone", fetchExitCode);
+                    throw new RuntimeException("Git fetch failed");
                 }
+
+                // Step 2: Force checkout to remote state (discards local changes)
+                ProcessBuilder resetPb = new ProcessBuilder(
+                        "git", "checkout", "-B", branch, "origin/" + branch
+                );
+                resetPb.directory(workspace);
+                resetPb.redirectErrorStream(true);
+                Process resetProcess = resetPb.start();
+                int resetExitCode = resetProcess.waitFor();
+
+                if (resetExitCode == 0) {
+                    log.info("✅ Force sync complete - workspace at origin/{}", branch);
+                    return workspace;
+                } else {
+                    log.warn("Git reset failed with exit code: {}, will re-clone", resetExitCode);
+                }
+            } catch (Exception e) {
+                log.warn("Failed to sync workspace: {}, will re-clone", e.getMessage());
+                // Fall through to re-clone
             }
         }
 
-        // Clone fresh - CRITICAL FIX: Clean URL and use consistent destination
-        log.info("🔄 Cloning repository to consistent workspace: {}", workspace.getAbsolutePath());
+        // Clone fresh to conversation-scoped directory
+        log.info("🔄 Cloning repository to conversation workspace: {}", workspace.getAbsolutePath());
 
         // Remove /tree/branch or /blob/branch from URL before cloning
         String cleanUrl = gitService.getCleanRepoUrl(repoUrl);

@@ -81,7 +81,7 @@ public class AgentExecution {
      * Confidence score (0.00 - 1.00).
      * How confident was the agent in its decision?
      */
-    @Column(name = "confidence", precision = 3, scale = 2)
+    @Column(name = "confidence")
     private Double confidence;
 
     /**

@@ -244,10 +244,6 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
                 log.error("❌ Failed to fetch last indexed commit: {}", e.getMessage());
                 return null;
 
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                callCtx.logError("Interrupted during retry delay", e);
-                return null;
             } catch (Exception e) {
                 callCtx.logError("Unexpected error", e);
                 log.error("❌ Failed to fetch last indexed commit: {}", e.getMessage(), e);

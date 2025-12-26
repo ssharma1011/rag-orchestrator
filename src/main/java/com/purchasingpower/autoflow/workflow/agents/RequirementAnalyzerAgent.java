@@ -90,11 +90,24 @@ public class RequirementAnalyzerAgent {
                 log.warn("⚠️ Low confidence ({}) - requesting clarification",
                         String.format("%.0f%%", analysis.getConfidence() * 100));
 
-                updates.put("lastAgentDecision", AgentDecision.askDev(
-                        "⚠️ **Unclear Requirement**\n\n" +
-                                "Confidence: " + String.format("%.0f%%", analysis.getConfidence() * 100) + "\n\n" +
-                                "**Questions:**\n" + String.join("\n", analysis.getQuestions())
-                ));
+                String clarificationMessage = "⚠️ **Unclear Requirement**\n\n" +
+                        "Confidence: " + String.format("%.0f%%", analysis.getConfidence() * 100) + "\n\n" +
+                        "**Questions:**\n" + String.join("\n", analysis.getQuestions());
+
+                // CRITICAL FIX: Add assistant's clarification request to conversation history
+                List<ChatMessage> updatedHistory = new ArrayList<>(
+                        conversationHistory != null ? conversationHistory : new ArrayList<>());
+
+                ChatMessage assistantMessage = new ChatMessage();
+                assistantMessage.setRole("assistant");
+                assistantMessage.setContent(clarificationMessage);
+                assistantMessage.setTimestamp(java.time.LocalDateTime.now());
+                updatedHistory.add(assistantMessage);
+
+                updates.put("conversationHistory", updatedHistory);
+                updates.put("lastAgentDecision", AgentDecision.askDev(clarificationMessage));
+
+                log.debug("✅ Added clarification request to conversation history");
                 return updates;
             }
 
@@ -102,11 +115,25 @@ public class RequirementAnalyzerAgent {
             if (!isDocumentationTask && !analysis.getQuestions().isEmpty()) {
                 log.info("📋 Need clarification - {} questions", analysis.getQuestions().size());
 
-                updates.put("lastAgentDecision", AgentDecision.askDev(
-                        "📋 **Need Clarification**\n\n" +
-                                "Please answer ALL questions below:\n\n" +
-                                String.join("\n", analysis.getQuestions())
-                ));
+                String questionsMessage = "📋 **Need Clarification**\n\n" +
+                        "Please answer ALL questions below:\n\n" +
+                        String.join("\n", analysis.getQuestions());
+
+                // CRITICAL FIX: Add assistant's questions to conversation history
+                // so when user responds, LLM knows what questions it asked
+                List<ChatMessage> updatedHistory = new ArrayList<>(
+                        conversationHistory != null ? conversationHistory : new ArrayList<>());
+
+                ChatMessage assistantMessage = new ChatMessage();
+                assistantMessage.setRole("assistant");
+                assistantMessage.setContent(questionsMessage);
+                assistantMessage.setTimestamp(java.time.LocalDateTime.now());
+                updatedHistory.add(assistantMessage);
+
+                updates.put("conversationHistory", updatedHistory);
+                updates.put("lastAgentDecision", AgentDecision.askDev(questionsMessage));
+
+                log.debug("✅ Added {} questions to conversation history", analysis.getQuestions().size());
                 return updates;
             }
 
@@ -158,20 +185,11 @@ public class RequirementAnalyzerAgent {
                     .replaceAll("```", "")
                     .trim();
 
-            log.info("═══════════════════════════════════════════════════════");
-            log.info("🔍 RAW LLM RESPONSE FROM REQUIREMENT ANALYZER:");
-            log.info(llmResponse);
-            log.info("═══════════════════════════════════════════════════════");
-
-
             RequirementAnalysis analysis = objectMapper.readValue(cleanJson, RequirementAnalysis.class);
-            log.info("📊 PARSED RequirementAnalysis:");
-            log.info("   taskType: '{}'", analysis.getTaskType());
-            log.info("   domain: '{}'", analysis.getDomain());
-            log.info("   summary: '{}'", analysis.getSummary());
-            log.info("   confidence: {}", analysis.getConfidence());
-            log.info("   questions: {}", analysis.getQuestions());
-            log.info("═══════════════════════════════════════════════════════");
+
+            log.debug("📊 Requirement analysis: taskType='{}', domain='{}', confidence={}, questions={}",
+                    analysis.getTaskType(), analysis.getDomain(), analysis.getConfidence(),
+                    analysis.getQuestions().size());
 
 
             return analysis;

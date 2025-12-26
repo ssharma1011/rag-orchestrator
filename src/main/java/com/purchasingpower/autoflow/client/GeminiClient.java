@@ -165,17 +165,22 @@ public class GeminiClient {
      * Overload with conversation ID for better metrics tracking
      */
     public String callChatApi(String prompt, String agentName, String conversationId) {
-        log.info("═══════════════════════════════════════════════════════════");
-        log.info("📤 GEMINI API CALL [{}]", agentName);
-        log.info("═══════════════════════════════════════════════════════════");
-        log.info("Call ID: {}", UUID.randomUUID().toString().substring(0, 8));
-        log.info("Conversation ID: {}", conversationId != null ? conversationId : "N/A");
-        log.info("Prompt length: {} chars", prompt.length());
-        log.info("\n📝 PROMPT:\n{}\n", truncateForLog(prompt, 2000));
+        var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
+                com.purchasingpower.autoflow.util.ExternalCallLogger.ServiceType.GEMINI,
+                "generateContent",
+                log
+        );
 
         String callId = UUID.randomUUID().toString();
         String model = props.getGemini().getChatModel();
         String url = getApiUrl(model, "generateContent");
+
+        callCtx.logRequest("Generating text",
+                "Agent", agentName,
+                "Conversation", conversationId != null ? conversationId : "N/A",
+                "Model", model,
+                "Prompt Length", prompt.length() + " chars",
+                "Prompt", com.purchasingpower.autoflow.util.ExternalCallLogger.truncate(prompt, 500));
 
         Map<String, Object> body = Map.of(
                 "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
@@ -200,7 +205,7 @@ public class GeminiClient {
                     .retryWhen(Retry.backoff(3, Duration.ofSeconds(10))
                             .filter(this::isRetryable)
                             .doBeforeRetry(signal -> {
-                                log.warn("Retrying LLM call [{}] - Attempt {}", agentName, signal.totalRetries() + 1);
+                                log.warn("⚠️ Retrying (attempt {})", signal.totalRetries() + 1);
                                 metrics.setRetryCount((int) signal.totalRetries() + 1);
                             }))
                     .block();
@@ -216,6 +221,7 @@ public class GeminiClient {
             JsonNode usageMetadata = root.path("usageMetadata");
             int inputTokens = usageMetadata.path("promptTokenCount").asInt(0);
             int outputTokens = usageMetadata.path("candidatesTokenCount").asInt(0);
+            int totalTokens = inputTokens + outputTokens;
 
             // Complete metrics
             metrics.setLatencyMs(latency);
@@ -224,22 +230,18 @@ public class GeminiClient {
             metrics.setSuccess(true);
             metrics.setInputTokens(inputTokens);
             metrics.setOutputTokens(outputTokens);
-            metrics.setTotalTokens(inputTokens + outputTokens);
+            metrics.setTotalTokens(totalTokens);
             metrics.setHttpStatusCode(200);
 
             double cost = metrics.calculateCost();
             double tokensPerSec = metrics.calculateTokensPerSecond();
 
-            log.info("═══════════════════════════════════════════════════════════");
-            log.info("📥 GEMINI API RESPONSE [{}]", agentName);
-            log.info("═══════════════════════════════════════════════════════════");
-            log.info("✅ Status: SUCCESS");
-            log.info("⏱️  Latency: {}ms", latency);
-            log.info("🎯 Tokens: {} input + {} output = {} total", inputTokens, outputTokens, inputTokens + outputTokens);
-            log.info("💰 Cost: ${}", String.format("%.4f", cost));
-            log.info("⚡ Throughput: {} tokens/sec", String.format("%.1f", tokensPerSec));
-            log.info("\n📝 RESPONSE:\n{}\n", truncateForLog(response, 2000));
-            log.info("═══════════════════════════════════════════════════════════\n");
+            callCtx.logResponse("Text generated successfully",
+                    "Tokens", String.format("%d in + %d out = %d total", inputTokens, outputTokens, totalTokens),
+                    "Cost", String.format("$%.4f", cost),
+                    "Throughput", String.format("%.1f tok/sec", tokensPerSec),
+                    "Response Length", response.length() + " chars",
+                    "Response", com.purchasingpower.autoflow.util.ExternalCallLogger.truncate(response, 500));
 
             // Record metrics (async, non-blocking)
             if (llmMetricsService != null) {
@@ -256,9 +258,7 @@ public class GeminiClient {
             metrics.setErrorMessage(e.getMessage());
             metrics.setHttpStatusCode(e.getStatusCode().value());
 
-            log.error("❌ LLM Call Failed [{}]", agentName);
-            log.error("   Status: {}", e.getStatusCode());
-            log.error("   Message: {}", e.getMessage());
+            callCtx.logError(e.getStatusCode() + ": " + e.getMessage(), e);
 
             // Record failure metrics
             if (llmMetricsService != null) {
@@ -274,7 +274,7 @@ public class GeminiClient {
             metrics.setSuccess(false);
             metrics.setErrorMessage(e.getMessage());
 
-            log.error("❌ LLM Call Failed [{}]", agentName, e);
+            callCtx.logError("Unexpected error", e);
 
             // Record failure metrics
             if (llmMetricsService != null) {

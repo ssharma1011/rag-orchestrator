@@ -54,20 +54,62 @@ public class GraphPersistenceServiceImpl implements GraphPersistenceService {
             List<GraphEdge> edges = extractEdges(chunks, repoName);
 
             // Step 3: Delete old data for this repo (idempotent update)
-            log.debug("Deleting old graph data for repo: {}", repoName);
-            edgeRepository.deleteByRepoName(repoName);
-            nodeRepository.deleteByRepoName(repoName);
+            var deleteCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
+                    com.purchasingpower.autoflow.util.ExternalCallLogger.ServiceType.NEO4J,
+                    "DeleteByRepo",
+                    log
+            );
+
+            try {
+                deleteCtx.logRequest("Deleting old graph data",
+                        "Repo", repoName);
+
+                edgeRepository.deleteByRepoName(repoName);
+                nodeRepository.deleteByRepoName(repoName);
+
+                deleteCtx.logResponse("Old graph data deleted");
+            } catch (Exception e) {
+                deleteCtx.logError("Failed to delete old data", e);
+                throw e;
+            }
 
             // Step 4: Bulk insert nodes
-            log.debug("Inserting {} nodes", nodes.size());
-            nodeRepository.saveAll(nodes);
+            var nodeCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
+                    com.purchasingpower.autoflow.util.ExternalCallLogger.ServiceType.NEO4J,
+                    "InsertNodes",
+                    log
+            );
+
+            try {
+                nodeCtx.logRequest("Inserting nodes", "Count", nodes.size());
+
+                nodeRepository.saveAll(nodes);
+
+                nodeCtx.logResponse("Nodes inserted successfully");
+            } catch (Exception e) {
+                nodeCtx.logError("Failed to insert nodes", e);
+                throw e;
+            }
 
             // Step 5: Bulk insert edges
-            log.debug("Inserting {} edges", edges.size());
-            edgeRepository.saveAll(edges);
+            var edgeCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
+                    com.purchasingpower.autoflow.util.ExternalCallLogger.ServiceType.NEO4J,
+                    "InsertEdges",
+                    log
+            );
 
-            log.info("✅ Graph persistence complete: {} nodes, {} edges for repo: {}",
-                    nodes.size(), edges.size(), repoName);
+            try {
+                edgeCtx.logRequest("Inserting edges", "Count", edges.size());
+
+                edgeRepository.saveAll(edges);
+
+                edgeCtx.logResponse("Edges inserted successfully");
+            } catch (Exception e) {
+                edgeCtx.logError("Failed to insert edges", e);
+                throw e;
+            }
+
+            log.info("✅ Graph persistence complete: {} nodes, {} edges", nodes.size(), edges.size());
 
         } catch (Exception e) {
             log.error("Graph persistence failed for repo: {}", repoName, e);

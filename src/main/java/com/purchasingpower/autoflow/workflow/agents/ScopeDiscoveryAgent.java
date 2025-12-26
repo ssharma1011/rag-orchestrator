@@ -271,8 +271,23 @@ public class ScopeDiscoveryAgent {
                     Map<String, Object> data = new HashMap<>();
                     data.put("className", node.getSimpleName());
                     data.put("filePath", node.getFilePath() != null ? node.getFilePath() : "");
-                    data.put("purpose", node.getSummary() != null ? node.getSummary() : "");
-                    data.put("dependencies", node.getDomain() != null ? node.getDomain() : "");
+
+                    // FIXED: Build purpose from summary, annotations, or infer from name
+                    String purpose = buildPurposeDescription(node);
+                    data.put("purpose", purpose);
+
+                    // FIXED: Get actual dependencies from graph edges
+                    List<String> dependencies = graphTraversalService.findDirectDependencies(
+                                    node.getNodeId(), repoName)
+                            .stream()
+                            .map(depId -> {
+                                // Extract simple name from FQN for readability
+                                int lastDot = depId.lastIndexOf('.');
+                                return lastDot >= 0 ? depId.substring(lastDot + 1) : depId;
+                            })
+                            .limit(5)  // Limit to top 5 for readability
+                            .toList();
+                    data.put("dependencies", dependencies.isEmpty() ? "None" : String.join(", ", dependencies));
 
                     // CRITICAL: Include method-level matches if available
                     String fqn = node.getFullyQualifiedName();
@@ -544,6 +559,57 @@ public class ScopeDiscoveryAgent {
     private String extractRepoName(String repoUrl) {
         String[] parts = repoUrl.replace(".git", "").split("/");
         return parts[parts.length - 1];
+    }
+
+    /**
+     * Build purpose description from node summary, annotations, or infer from class name.
+     */
+    private String buildPurposeDescription(GraphNode node) {
+        // If summary exists and is not empty, use it
+        if (node.getSummary() != null && !node.getSummary().trim().isEmpty()) {
+            return node.getSummary();
+        }
+
+        StringBuilder purpose = new StringBuilder();
+
+        // Infer from type
+        String type = node.getType();
+        if ("CLASS".equals(type)) {
+            purpose.append("Class");
+        } else if ("METHOD".equals(type)) {
+            purpose.append("Method");
+        }
+
+        // Infer from simple name patterns
+        String simpleName = node.getSimpleName();
+        if (simpleName != null) {
+            if (simpleName.endsWith("Controller")) {
+                purpose.append(" - REST API controller handling HTTP requests");
+            } else if (simpleName.endsWith("Service") || simpleName.endsWith("ServiceImpl")) {
+                purpose.append(" - Service component containing business logic");
+            } else if (simpleName.endsWith("Repository")) {
+                purpose.append(" - Data access repository for database operations");
+            } else if (simpleName.endsWith("Client")) {
+                purpose.append(" - Client for external API/service calls");
+            } else if (simpleName.endsWith("Agent")) {
+                purpose.append(" - Workflow agent for task orchestration");
+            } else if (simpleName.endsWith("Util") || simpleName.endsWith("Utils") || simpleName.endsWith("Helper")) {
+                purpose.append(" - Utility/helper class with common functions");
+            } else if (simpleName.endsWith("Config") || simpleName.endsWith("Configuration")) {
+                purpose.append(" - Configuration class");
+            } else if (simpleName.startsWith("Test") || simpleName.endsWith("Test")) {
+                purpose.append(" - Test class");
+            } else {
+                purpose.append(" - ").append(simpleName);
+            }
+        }
+
+        // Add domain if available
+        if (node.getDomain() != null && !node.getDomain().trim().isEmpty()) {
+            purpose.append(" (domain: ").append(node.getDomain()).append(")");
+        }
+
+        return purpose.toString();
     }
 
     private static class ScopeProposalDTO {

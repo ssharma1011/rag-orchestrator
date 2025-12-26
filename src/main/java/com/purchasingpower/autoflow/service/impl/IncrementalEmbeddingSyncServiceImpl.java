@@ -172,50 +172,50 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
 
     @Override
     public String getLastIndexedCommit(String repoName) {
-        try {
-            String metadataId = METADATA_VECTOR_PREFIX + repoName + INDEX_STATE_SUFFIX;
-            log.info("🔍 Fetching metadata vector ID: {}", metadataId);
+        String metadataId = METADATA_VECTOR_PREFIX + repoName + INDEX_STATE_SUFFIX;
 
-            // Retry up to 3 times to handle Pinecone eventual consistency
-            for (int attempt = 1; attempt <= 3; attempt++) {
+        // Retry up to 3 times with exponential backoff (2s, 4s, 8s) for transient errors
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
+                    com.purchasingpower.autoflow.util.ExternalCallLogger.ServiceType.PINECONE,
+                    "FetchMetadata",
+                    log
+            );
+
+            try {
+                callCtx.logRequest("Fetching metadata",
+                        "Vector ID", metadataId,
+                        "Attempt", attempt + "/3");
+
                 var response = pineconeClient.getIndexConnection(indexName)
                         .fetch(List.of(metadataId), "");
 
-                log.debug("📊 Fetch response (attempt {}): {} vector(s) found",
-                        attempt, response != null ? response.getVectorsCount() : 0);
-
-                if (response == null) {
-                    log.warn("⚠️ Fetch response is null (attempt {})", attempt);
+                if (response == null || response.getVectorsMap().isEmpty()) {
+                    callCtx.logResponse("Empty response - no vectors found");
                     if (attempt < 3) {
-                        Thread.sleep(1000); // Wait 1 second before retry
+                        long delayMs = (long) Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
+                        log.warn("⚠️ Retrying in {}ms...", delayMs);
+                        Thread.sleep(delayMs);
                         continue;
                     }
+                    log.warn("⚠️ No metadata found after {} attempts", attempt);
                     return null;
                 }
 
-                if (response.getVectorsMap().isEmpty()) {
-                    log.warn("⚠️ No vectors found in fetch response. Vector map is empty (attempt {})", attempt);
-                    if (attempt < 3) {
-                        Thread.sleep(1000); // Wait 1 second before retry
-                        continue;
-                    }
-                    return null;
-                }
-
-                // Success! Vector found
                 var vector = response.getVectorsMap().get(metadataId);
                 if (vector == null) {
-                    log.warn("⚠️ Metadata vector with ID '{}' not found in response (attempt {})", metadataId, attempt);
-                    log.debug("Available vector IDs: {}", response.getVectorsMap().keySet());
+                    callCtx.logResponse("Vector not found in response",
+                            "Available IDs", response.getVectorsMap().keySet());
                     if (attempt < 3) {
-                        Thread.sleep(1000);
+                        Thread.sleep((long) Math.pow(2, attempt) * 1000);
                         continue;
                     }
                     return null;
                 }
 
                 var metadata = vector.getMetadata().getFieldsMap();
-                log.debug("📋 Metadata fields: {}", metadata.keySet());
+                callCtx.logResponse("Metadata found",
+                        "Fields", metadata.keySet());
 
                 if (metadata.containsKey("last_indexed_commit")) {
                     String commit = metadata.get("last_indexed_commit").getStringValue();
@@ -226,15 +226,39 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
 
                 log.warn("⚠️ Metadata vector found but missing 'last_indexed_commit' field");
                 return null;
+
+            } catch (PineconeUnmappedHttpException e) {
+                // Handle 502 and other transient HTTP errors with retry
+                if (e.getMessage().contains("502") && attempt < 3) {
+                    long delayMs = (long) Math.pow(2, attempt) * 1000;
+                    callCtx.logError("502 Server Error - will retry", e);
+                    log.warn("⚠️ Pinecone 502 error (attempt {}/3), retrying in {}ms...", attempt, delayMs);
+                    try {
+                        Thread.sleep(delayMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return null;
+                    }
+                    continue;
+                }
+                // Non-retryable error or retries exhausted
+                callCtx.logError("HTTP error", e);
+                log.error("❌ Failed to fetch last indexed commit: {}", e.getMessage());
+                return null;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                callCtx.logError("Interrupted during retry delay", e);
+                return null;
+            } catch (Exception e) {
+                callCtx.logError("Unexpected error", e);
+                log.error("❌ Failed to fetch last indexed commit: {}", e.getMessage(), e);
+                return null;
             }
-
-            // All retries exhausted
-            return null;
-
-        } catch (Exception e) {
-            log.error("❌ Failed to fetch last indexed commit: {}", e.getMessage(), e);
-            return null;
         }
+
+        // All retries exhausted
+        log.warn("⚠️ All retry attempts exhausted for fetching metadata");
+        return null;
     }
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -453,9 +477,13 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
      * IMPORTANT: Does NOT delete metadata vector (preserves index state).
      */
     private void deleteAllVectorsForRepo(String repoName) {
-        try {
-            log.info("🗑️ Deleting all CODE vectors for repo: {} (preserving metadata)", repoName);
+        var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
+                com.purchasingpower.autoflow.util.ExternalCallLogger.ServiceType.PINECONE,
+                "DeleteByFilter",
+                log
+        );
 
+        try {
             // Delete ONLY code vectors (exclude metadata by filtering on type != INDEX_METADATA)
             // Build filter: repo_name = repoName AND type != "INDEX_METADATA"
             Struct filter = Struct.newBuilder()
@@ -487,12 +515,17 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
                             .build())
                     .build();
 
+            callCtx.logRequest("Deleting all code vectors",
+                    "Repo", repoName,
+                    "Filter", "repo_name=" + repoName + " AND type!=INDEX_METADATA");
+
             pineconeClient.getIndexConnection(indexName).deleteByFilter(filter, "");
 
-            log.info("✅ Deleted all code vectors for repo: {} (metadata preserved)", repoName);
+            callCtx.logResponse("Code vectors deleted (metadata preserved)");
 
         } catch (Exception e) {
-            log.error("❌ Failed to delete vectors for repo: {}", e.getMessage());
+            callCtx.logError("Failed to delete vectors", e);
+            throw new RuntimeException("Failed to delete vectors for repo: " + repoName, e);
         }
     }
 
@@ -501,6 +534,12 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
      * Returns estimated count (Pinecone doesn't return actual count).
      */
     private int deleteVectorsForFile(String repoName, String filePath) {
+        var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
+                com.purchasingpower.autoflow.util.ExternalCallLogger.ServiceType.PINECONE,
+                "DeleteByFilter",
+                log
+        );
+
         try {
             // Normalize the file path
             String normalizedPath = filePath.replace("\\", "/");
@@ -522,13 +561,19 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
                             .build())
                     .build();
 
+            callCtx.logRequest("Deleting vectors for file",
+                    "Repo", repoName,
+                    "File", normalizedPath);
+
             pineconeClient.getIndexConnection(indexName).deleteByFilter(filter, "");
+
+            callCtx.logResponse("File vectors deleted (estimated ~5 chunks)");
 
             // Pinecone doesn't return count, estimate ~5 chunks per file
             return 5;
 
         } catch (Exception e) {
-            log.error("Failed to delete vectors for file {}: {}", filePath, e.getMessage());
+            callCtx.logError("Failed to delete file vectors", e);
             return 0;
         }
     }
@@ -600,13 +645,34 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
 
         // 4. Upsert in batches
         int batchSize = 100;
+        int batchCount = (int) Math.ceil((double) vectors.size() / batchSize);
+
         for (int i = 0; i < vectors.size(); i += batchSize) {
             int end = Math.min(i + batchSize, vectors.size());
             List<VectorWithUnsignedIndices> batch = vectors.subList(i, end);
-            pineconeClient.getIndexConnection(indexName).upsert(batch, "");
+            int batchNum = (i / batchSize) + 1;
+
+            var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
+                    com.purchasingpower.autoflow.util.ExternalCallLogger.ServiceType.PINECONE,
+                    "Upsert",
+                    log
+            );
+
+            try {
+                callCtx.logRequest("Upserting vector batch",
+                        "Batch", batchNum + "/" + batchCount,
+                        "Vectors", batch.size());
+
+                pineconeClient.getIndexConnection(indexName).upsert(batch, "");
+
+                callCtx.logResponse("Batch upserted successfully");
+            } catch (Exception e) {
+                callCtx.logError("Failed to upsert batch", e);
+                throw new RuntimeException("Failed to upsert batch " + batchNum, e);
+            }
         }
 
-        log.info("Upserted {} vectors to Pinecone", vectors.size());
+        log.info("✅ Total upserted: {} vectors in {} batches", vectors.size(), batchCount);
         return vectors.size();
     }
 
@@ -614,10 +680,16 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
      * Updates the index state metadata in Pinecone.
      */
     private void updateIndexState(String repoName, String commitHash, int vectorCount) {
-        try {
-            String metadataId = METADATA_VECTOR_PREFIX + repoName + INDEX_STATE_SUFFIX;
-            log.info("💾 Saving metadata vector ID: {}", metadataId);
+        String metadataId = METADATA_VECTOR_PREFIX + repoName + INDEX_STATE_SUFFIX;
 
+        // Upsert metadata vector
+        var upsertCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
+                com.purchasingpower.autoflow.util.ExternalCallLogger.ServiceType.PINECONE,
+                "UpsertMetadata",
+                log
+        );
+
+        try {
             // Create dummy vector with small non-zero values (Pinecone rejects all-zero vectors)
             List<Float> dummyVector = new ArrayList<>(Collections.nCopies(EMBEDDING_DIMENSION, 0.001f));
 
@@ -634,10 +706,6 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
                             .setStringValue(String.valueOf(vectorCount)).build())
                     .build();
 
-            log.debug("📋 Metadata to save: repo={}, commit={}, count={}, timestamp={}",
-                    repoName, commitHash.substring(0, Math.min(8, commitHash.length())),
-                    vectorCount, Instant.now());
-
             VectorWithUnsignedIndices metadataVector = new VectorWithUnsignedIndices(
                     metadataId,
                     dummyVector,
@@ -645,23 +713,46 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
                     null
             );
 
-            var response = pineconeClient.getIndexConnection(indexName).upsert(List.of(metadataVector), "");
+            upsertCtx.logRequest("Saving index state",
+                    "Repo", repoName,
+                    "Commit", commitHash.substring(0, Math.min(8, commitHash.length())),
+                    "Vector Count", vectorCount);
 
-            log.info("📤 Upsert response: {}", response);
-            log.info("✅ Saved metadata vector to Pinecone. Commit: {}, Vectors: {}",
-                    commitHash.substring(0, Math.min(8, commitHash.length())), vectorCount);
+            pineconeClient.getIndexConnection(indexName).upsert(List.of(metadataVector), "");
+
+            upsertCtx.logResponse("Metadata vector saved");
 
             // Verify the save by fetching it back (handles eventual consistency)
             Thread.sleep(1000); // Wait 1 second for Pinecone to process
-            var verifyResponse = pineconeClient.getIndexConnection(indexName).fetch(List.of(metadataId), "");
-            if (verifyResponse != null && !verifyResponse.getVectorsMap().isEmpty()) {
-                log.info("✅ VERIFIED: Metadata vector successfully stored and retrievable");
-            } else {
-                log.warn("⚠️ WARNING: Metadata vector saved but not immediately retrievable (eventual consistency issue)");
+
+            var verifyCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
+                    com.purchasingpower.autoflow.util.ExternalCallLogger.ServiceType.PINECONE,
+                    "VerifyMetadata",
+                    log
+            );
+
+            try {
+                verifyCtx.logRequest("Verifying metadata save", "Vector ID", metadataId);
+
+                var verifyResponse = pineconeClient.getIndexConnection(indexName).fetch(List.of(metadataId), "");
+
+                if (verifyResponse != null && !verifyResponse.getVectorsMap().isEmpty()) {
+                    verifyCtx.logResponse("Metadata verified successfully");
+                } else {
+                    verifyCtx.logResponse("Metadata not immediately retrievable (eventual consistency)");
+                    log.warn("⚠️ Metadata vector saved but not immediately retrievable");
+                }
+            } catch (Exception e) {
+                verifyCtx.logError("Verification failed", e);
+                log.warn("⚠️ Could not verify metadata save: {}", e.getMessage());
             }
 
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            upsertCtx.logError("Interrupted during verification wait", e);
+            throw new RuntimeException("Interrupted while saving metadata", e);
         } catch (Exception e) {
-            log.error("❌ CRITICAL: Failed to update index state: {}", e.getMessage(), e);
+            upsertCtx.logError("Failed to save metadata", e);
             throw new RuntimeException("Failed to save metadata vector to Pinecone", e);
         }
     }

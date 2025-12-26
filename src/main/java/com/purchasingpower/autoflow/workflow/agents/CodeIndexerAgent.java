@@ -445,7 +445,7 @@ public class CodeIndexerAgent {
      */
     private String extractRepoName(String repoUrl) {
         if (repoUrl == null || repoUrl.trim().isEmpty()) {
-            return "rag-orchestrator"; // Default repo name
+            throw new IllegalArgumentException("Repository URL is required but was not provided");
         }
 
         String name = repoUrl;

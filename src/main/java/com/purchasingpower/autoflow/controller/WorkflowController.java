@@ -42,6 +42,19 @@ public class WorkflowController {
         try {
             log.info("Starting workflow for user: {}", request.getUserId());
 
+            // Validate required fields
+            if (request.getRepoUrl() == null || request.getRepoUrl().trim().isEmpty()) {
+                log.warn("Workflow start rejected - missing repoUrl");
+                return ResponseEntity.badRequest()
+                        .body(WorkflowResponse.error("Repository URL is required. Please provide the GitHub repository URL."));
+            }
+
+            if (request.getRequirement() == null || request.getRequirement().trim().isEmpty()) {
+                log.warn("Workflow start rejected - missing requirement");
+                return ResponseEntity.badRequest()
+                        .body(WorkflowResponse.error("Requirement is required. Please describe what you want to build or fix."));
+            }
+
             WorkflowState initialState = WorkflowState.builder()
                     .requirement(request.getRequirement())
                     .repoUrl(request.getRepoUrl())

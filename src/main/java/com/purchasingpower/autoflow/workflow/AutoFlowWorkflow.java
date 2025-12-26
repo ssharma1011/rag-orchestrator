@@ -68,6 +68,14 @@ public class AutoFlowWorkflow {
             return updates;
         }));
 
+        graph.addNode("chat_responder", node_async(s -> {
+            log.info("💬 Responding to casual chat message");
+            Map<String, Object> updates = new java.util.HashMap<>(s.toMap());
+            updates.put("lastAgentDecision", AgentDecision.endSuccess("👋 Hello! I'm ready to help with your codebase. What would you like to work on?"));
+            updates.put("workflowStatus", "COMPLETED");
+            return updates;
+        }));
+
         // Define Edges
         graph.addEdge(START, "requirement_analyzer");
 
@@ -85,6 +93,12 @@ public class AutoFlowWorkflow {
                     }
                     log.info("═══════════════════════════════════════════════════════");
 
+                    // Handle casual chat/greetings - no code processing needed
+                    if (analysis != null && "CHAT".equalsIgnoreCase(analysis.getTaskType())) {
+                        log.info("💬 Chat message detected - responding directly");
+                        return "chat_responder";
+                    }
+
                     if (analysis != null && "DOCUMENTATION".equalsIgnoreCase(analysis.getTaskType())) {
                         log.info("📚 Routing to documentation agent");
                         return "code_indexer";  // Still need to index first!
@@ -95,6 +109,7 @@ public class AutoFlowWorkflow {
                     return s.hasLogs() ? "log_analyzer" : "code_indexer";
                 }),
                 Map.of(
+                        "chat_responder", "chat_responder",
                         "ask_developer", "ask_developer",
                         "log_analyzer", "log_analyzer",
                         "code_indexer", "code_indexer"
@@ -174,6 +189,7 @@ public class AutoFlowWorkflow {
         graph.addEdge("pr_creator", END);
 
         graph.addEdge("ask_developer", END);
+        graph.addEdge("chat_responder", END);
 
         this.compiledGraph = graph.compile();
     }

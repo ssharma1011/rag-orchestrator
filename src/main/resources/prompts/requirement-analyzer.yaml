@@ -52,6 +52,8 @@ userPrompt: |
 
   Determine:
   1. Task type:
+     - "chat" = Casual greeting/conversation with no specific task
+       Examples: "hi", "hello", "thanks", "ok", "got it"
      - "documentation" = User wants explanation/understanding/learning (read-only)
        Examples: "explain the code", "how does X work?", "what is the architecture?",
                  "show me the codebase", "understand the system", "document this"
@@ -84,7 +86,7 @@ userPrompt: |
 
   Output strict JSON (no markdown):
   {
-    "taskType": "documentation|bug_fix|feature|refactor|test",
+    "taskType": "chat|documentation|bug_fix|feature|refactor|test",
     "domain": "autoflow|payment|user|etc",
     "summary": "One sentence summary",
     "detailedDescription": "What needs to be done",
@@ -92,6 +94,8 @@ userPrompt: |
     "questions": [],
     "confidence": 0.95
   }
+
+  IMPORTANT: For chat/greetings, use taskType="chat" with high confidence
 
   CRITICAL:
   - For documentation tasks: questions array MUST be EMPTY

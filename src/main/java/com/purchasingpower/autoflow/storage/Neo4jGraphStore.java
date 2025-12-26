@@ -97,8 +97,17 @@ public class Neo4jGraphStore {
     // ================================================================
 
     public void storeCodeGraph(ParsedCodeGraph graph) {
-        log.info("Storing code graph: {} classes, {} methods, {} relationships",
-                graph.getClasses().size(), graph.getMethods().size(), graph.getTotalRelationships());
+        var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
+                com.purchasingpower.autoflow.util.ExternalCallLogger.ServiceType.NEO4J,
+                "StoreCodeGraph",
+                log
+        );
+
+        callCtx.logRequest("Storing code graph",
+                "Classes", graph.getClasses().size(),
+                "Methods", graph.getMethods().size(),
+                "Fields", graph.getFields().size(),
+                "Relationships", graph.getTotalRelationships());
 
         try (Session session = driver.session()) {
             session.writeTransaction(tx -> {
@@ -117,9 +126,10 @@ public class Neo4jGraphStore {
                 return null;
             });
 
-            log.info("Code graph stored successfully");
+            callCtx.logResponse("Code graph stored successfully");
+
         } catch (Exception e) {
-            log.error("Failed to store code graph", e);
+            callCtx.logError("Failed to store code graph", e);
             throw new RuntimeException("Failed to store code graph", e);
         }
     }

@@ -174,7 +174,7 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
     public String getLastIndexedCommit(String repoName) {
         String metadataId = METADATA_VECTOR_PREFIX + repoName + INDEX_STATE_SUFFIX;
 
-        // Retry up to 3 times with exponential backoff (2s, 4s, 8s) for transient errors
+        // Retry up to 3 times with exponential backoff (2s, 4s, 8s) for SERVER ERRORS ONLY
         for (int attempt = 1; attempt <= 3; attempt++) {
             var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
                     com.purchasingpower.autoflow.util.ExternalCallLogger.ServiceType.PINECONE,
@@ -190,15 +190,11 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
                 var response = pineconeClient.getIndexConnection(indexName)
                         .fetch(List.of(metadataId), "");
 
+                // Empty response is VALID - means no metadata exists (expected for fresh index)
+                // Do NOT retry on empty response - return immediately
                 if (response == null || response.getVectorsMap().isEmpty()) {
-                    callCtx.logResponse("Empty response - no vectors found");
-                    if (attempt < 3) {
-                        long delayMs = (long) Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
-                        log.warn("⚠️ Retrying in {}ms...", delayMs);
-                        Thread.sleep(delayMs);
-                        continue;
-                    }
-                    log.warn("⚠️ No metadata found after {} attempts", attempt);
+                    callCtx.logResponse("No metadata found (fresh index)");
+                    log.info("No previous index state found - will perform full index");
                     return null;
                 }
 
@@ -206,10 +202,7 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
                 if (vector == null) {
                     callCtx.logResponse("Vector not found in response",
                             "Available IDs", response.getVectorsMap().keySet());
-                    if (attempt < 3) {
-                        Thread.sleep((long) Math.pow(2, attempt) * 1000);
-                        continue;
-                    }
+                    log.warn("Metadata vector ID mismatch");
                     return null;
                 }
 
@@ -219,8 +212,8 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
 
                 if (metadata.containsKey("last_indexed_commit")) {
                     String commit = metadata.get("last_indexed_commit").getStringValue();
-                    log.info("✅ Found previous commit: {} (attempt {})",
-                            commit.substring(0, Math.min(8, commit.length())), attempt);
+                    log.info("✅ Found previous commit: {}",
+                            commit.substring(0, Math.min(8, commit.length())));
                     return commit;
                 }
 
@@ -228,23 +221,29 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
                 return null;
 
             } catch (PineconeUnmappedHttpException e) {
-                // Handle 502 and other transient HTTP errors with retry
-                if (e.getMessage().contains("502") && attempt < 3) {
+                // ONLY retry on server-side errors (502, 503, etc.)
+                boolean isServerError = e.getMessage().contains("502") ||
+                                       e.getMessage().contains("503") ||
+                                       e.getMessage().contains("504");
+
+                if (isServerError && attempt < 3) {
                     long delayMs = (long) Math.pow(2, attempt) * 1000;
-                    callCtx.logError("502 Server Error - will retry", e);
-                    log.warn("⚠️ Pinecone 502 error (attempt {}/3), retrying in {}ms...", attempt, delayMs);
+                    callCtx.logError("Server error (retryable) - attempt " + attempt, e);
+                    log.warn("⚠️ Pinecone server error, retrying in {}ms...", delayMs);
                     try {
                         Thread.sleep(delayMs);
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
                         return null;
                     }
-                    continue;
+                    continue; // Retry
                 }
+
                 // Non-retryable error or retries exhausted
-                callCtx.logError("HTTP error", e);
+                callCtx.logError("HTTP error (non-retryable or retries exhausted)", e);
                 log.error("❌ Failed to fetch last indexed commit: {}", e.getMessage());
                 return null;
+
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 callCtx.logError("Interrupted during retry delay", e);
@@ -256,8 +255,8 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
             }
         }
 
-        // All retries exhausted
-        log.warn("⚠️ All retry attempts exhausted for fetching metadata");
+        // All retries exhausted (should only reach here if server errors persisted)
+        log.error("⚠️ All retry attempts exhausted due to persistent server errors");
         return null;
     }
 
@@ -523,6 +522,15 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
 
             callCtx.logResponse("Code vectors deleted (metadata preserved)");
 
+        } catch (io.grpc.StatusRuntimeException e) {
+            // Handle "Namespace not found" gracefully - it's okay if nothing exists to delete
+            if (e.getStatus().getCode() == io.grpc.Status.Code.NOT_FOUND) {
+                callCtx.logResponse("Nothing to delete (namespace doesn't exist yet)");
+                log.info("Namespace not found - skipping delete (fresh index)");
+            } else {
+                callCtx.logError("gRPC error during delete", e);
+                throw new RuntimeException("Failed to delete vectors for repo: " + repoName, e);
+            }
         } catch (Exception e) {
             callCtx.logError("Failed to delete vectors", e);
             throw new RuntimeException("Failed to delete vectors for repo: " + repoName, e);

@@ -2,6 +2,7 @@ package com.purchasingpower.autoflow.workflow.agents;
 
 import com.purchasingpower.autoflow.model.neo4j.ClassNode;
 import com.purchasingpower.autoflow.query.HybridRetriever;
+import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.storage.Neo4jGraphStore;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +24,7 @@ public class ContextBuilderAgent {
 
     private final Neo4jGraphStore neo4jStore;
     private final HybridRetriever hybridRetriever;
+    private final GitOperationsService gitService;
 
     public Map<String, Object> execute(WorkflowState state) {
         log.info("🔨 Building exact context for {} files...",
@@ -30,7 +32,7 @@ public class ContextBuilderAgent {
 
         try {
             ScopeProposal scope = state.getScopeProposal();
-            String repoName = extractRepoName(state.getRepoUrl());
+            String repoName = gitService.extractRepoName(state.getRepoUrl());
             File workspace = state.getWorkspaceDir();
 
             StructuredContext context = buildContext(scope, repoName, workspace);
@@ -147,10 +149,5 @@ public class ContextBuilderAgent {
     private String extractDomain(String className) {
         String[] parts = className.split("\\.");
         return parts.length > 3 ? parts[parts.length - 2] : "unknown";
-    }
-
-    private String extractRepoName(String repoUrl) {
-        String[] parts = repoUrl.replace(".git", "").split("/");
-        return parts[parts.length - 1];
     }
 }

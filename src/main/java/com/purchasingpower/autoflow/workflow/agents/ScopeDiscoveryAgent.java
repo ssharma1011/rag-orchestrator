@@ -5,6 +5,7 @@ import com.purchasingpower.autoflow.client.GeminiClient;
 import com.purchasingpower.autoflow.client.PineconeRetriever;
 import com.purchasingpower.autoflow.model.graph.GraphNode;
 import com.purchasingpower.autoflow.repository.GraphNodeRepository;
+import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
 import com.purchasingpower.autoflow.service.graph.GraphTraversalService;
 import com.purchasingpower.autoflow.workflow.state.*;
@@ -27,12 +28,13 @@ public class ScopeDiscoveryAgent {
     private final GeminiClient geminiClient;
     private final PromptLibraryService promptLibrary;
     private final ObjectMapper objectMapper;
+    private final GitOperationsService gitService;
 
     public Map<String, Object> execute(WorkflowState state) {
         log.info("🔍 Discovering scope for: {}", state.getRequirement());
 
         RequirementAnalysis req = state.getRequirementAnalysis();
-        String repoName = extractRepoName(state.getRepoUrl());
+        String repoName = gitService.extractRepoName(state.getRepoUrl());
 
         try {
             List<GraphNode> candidates = findCandidateClasses(req, repoName);
@@ -554,14 +556,6 @@ public class ScopeDiscoveryAgent {
 
         log.debug("   📊 Final adaptive threshold: {:.3f}", threshold);
         return threshold;
-    }
-
-    private String extractRepoName(String repoUrl) {
-        if (repoUrl == null || repoUrl.trim().isEmpty()) {
-            throw new IllegalArgumentException("Repository URL is required but was not provided");
-        }
-        String[] parts = repoUrl.replace(".git", "").split("/");
-        return parts[parts.length - 1];
     }
 
     /**

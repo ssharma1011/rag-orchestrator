@@ -35,7 +35,7 @@ public class PRCreatorAgent {
             log.info("Pushed commits to: {}", branchName);
 
             // Create PR - FIX: Use correct parameter order
-            String repoName = extractRepoName(state.getRepoUrl());
+            String repoName = gitService.extractRepoName(state.getRepoUrl());
             String baseBranch = state.getBaseBranch() != null ? state.getBaseBranch() : "develop";
             
             String prUrl = bitbucketService.createPullRequest(
@@ -60,10 +60,5 @@ public class PRCreatorAgent {
             updates.put("lastAgentDecision", AgentDecision.error("PR creation failed: " + e.getMessage()));
             return updates;
         }
-    }
-
-    private String extractRepoName(String repoUrl) {
-        String[] parts = repoUrl.replace(".git", "").split("/");
-        return parts[parts.length - 1];
     }
 }

@@ -49,8 +49,8 @@ public class CodeIndexerAgent {
         try {
             Map<String, Object> updates = new HashMap<>(state.toMap());
 
-            // Extract repo name
-            String repoName = extractRepoName(state.getRepoUrl());
+            // Extract repo name using centralized service
+            String repoName = gitService.extractRepoName(state.getRepoUrl());
             log.info("Repository name: {}", repoName);
 
             // ================================================================
@@ -437,30 +437,5 @@ public class CodeIndexerAgent {
             log.warn("Failed to query remote commit: {}", e.getMessage());
             return null;  // Fail safe - proceed with full index if can't check
         }
-    }
-
-    /**
-     * Extract repository name from URL
-     * Example: "https://github.com/user/repo.git" → "repo"
-     */
-    private String extractRepoName(String repoUrl) {
-        if (repoUrl == null || repoUrl.trim().isEmpty()) {
-            throw new IllegalArgumentException("Repository URL is required but was not provided");
-        }
-
-        String name = repoUrl;
-
-        // Remove .git suffix
-        if (name.endsWith(".git")) {
-            name = name.substring(0, name.length() - 4);
-        }
-
-        // Get last part after /
-        int lastSlash = name.lastIndexOf('/');
-        if (lastSlash >= 0) {
-            name = name.substring(lastSlash + 1);
-        }
-
-        return name;
     }
 }

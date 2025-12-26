@@ -54,6 +54,12 @@ userPrompt: |
   - Set taskType to "unknown"
   - Ask: "What would you like me to help you build or fix?"
 
+  CRITICAL: If the requirement is conversational/contextual with NO actual task:
+  - Examples: "our conversation was cut off", "what were we discussing?", "I see", "ok", "thanks", "continue"
+  - Set confidence to 0.0
+  - Set taskType to "unknown"
+  - Respond: "I don't have context from previous conversations. Please describe what you'd like me to help you with."
+
   Determine:
   1. Task type:
      - "documentation" = User wants explanation/understanding/learning (read-only)

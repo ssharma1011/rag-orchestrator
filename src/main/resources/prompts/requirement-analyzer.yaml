@@ -49,6 +49,11 @@ userPrompt: |
   - If you have NEW questions, ask them ALL at once
   - If you have enough information, proceed with confidence
 
+  CRITICAL: If the requirement is just a greeting (hi, hello, hey) with NO actual task:
+  - Set confidence to 0.0
+  - Set taskType to "unknown"
+  - Ask: "What would you like me to help you build or fix?"
+
   Determine:
   1. Task type:
      - "documentation" = User wants explanation/understanding/learning (read-only)

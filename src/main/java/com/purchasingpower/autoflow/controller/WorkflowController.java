@@ -30,6 +30,7 @@ import java.util.Map;
 public class WorkflowController {
 
     private final WorkflowExecutionService workflowService;
+    private final com.purchasingpower.autoflow.service.GitOperationsService gitService;
 
     /**
      * Start a new workflow.
@@ -55,10 +56,18 @@ public class WorkflowController {
                         .body(WorkflowResponse.error("Requirement is required. Please describe what you want to build or fix."));
             }
 
+            // Extract branch from URL if present (e.g., /tree/feature-branch)
+            String branchFromUrl = gitService.extractBranchFromUrl(request.getRepoUrl());
+            String effectiveBranch = request.getBaseBranch() != null ? request.getBaseBranch() :
+                                    (branchFromUrl != null ? branchFromUrl : "main");
+
+            log.info("Branch resolution: baseBranch={}, fromUrl={}, effective={}",
+                    request.getBaseBranch(), branchFromUrl, effectiveBranch);
+
             WorkflowState initialState = WorkflowState.builder()
                     .requirement(request.getRequirement())
                     .repoUrl(request.getRepoUrl())
-                    .baseBranch(request.getBaseBranch() != null ? request.getBaseBranch() : "main")
+                    .baseBranch(effectiveBranch)
                     .jiraUrl(request.getJiraUrl())
                     .logsPasted(request.getLogsPasted())
                     .userId(request.getUserId())

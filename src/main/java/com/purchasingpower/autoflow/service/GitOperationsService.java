@@ -6,6 +6,16 @@ import java.util.List;
 public interface GitOperationsService {
     File cloneRepository(String repoUrl, String branchName);
 
+    /**
+     * Clone repository to a specific destination directory
+     *
+     * @param repoUrl Git repository URL (must be clean URL without /tree/ or /blob/)
+     * @param branchName Branch to checkout
+     * @param destination Target directory for clone
+     * @return The destination directory
+     */
+    File cloneRepository(String repoUrl, String branchName, File destination);
+
     void commitAndPush(File workspaceDir, String message);
 
     void createAndCheckoutBranch(File workspaceDir, String newBranchName);
@@ -53,4 +63,26 @@ public interface GitOperationsService {
      * @return Repository name
      */
     String extractRepoName(String repoUrl);
+
+    /**
+     * Extract branch name from GitHub URL
+     * Examples:
+     *   "https://github.com/user/repo/tree/feature-branch" → "feature-branch"
+     *   "https://github.com/user/repo" → null
+     *
+     * @param repoUrl Git repository URL
+     * @return Branch name if present in URL, null otherwise
+     */
+    String extractBranchFromUrl(String repoUrl);
+
+    /**
+     * Get clean repo URL without branch/file paths
+     * Examples:
+     *   "https://github.com/user/repo/tree/branch" → "https://github.com/user/repo"
+     *   "https://github.com/user/repo" → "https://github.com/user/repo"
+     *
+     * @param repoUrl Git repository URL (may contain /tree/ or /blob/)
+     * @return Clean repository URL suitable for git clone
+     */
+    String getCleanRepoUrl(String repoUrl);
 }

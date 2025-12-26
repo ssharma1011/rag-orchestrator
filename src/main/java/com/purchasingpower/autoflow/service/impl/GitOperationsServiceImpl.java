@@ -36,11 +36,16 @@ public class GitOperationsServiceImpl implements GitOperationsService {
 
     @Override
     public File cloneRepository(String repoUrl, String branchName) {
+        // Generate random destination for backward compatibility
         File destination = new File(
                 appProperties.getWorkspaceDir(),
                 UUID.randomUUID().toString()
         );
+        return cloneRepository(repoUrl, branchName, destination);
+    }
 
+    @Override
+    public File cloneRepository(String repoUrl, String branchName, File destination) {
         // Ensure clean state
         if(destination.exists()) {
             FileSystemUtils.deleteRecursively(destination);
@@ -223,7 +228,10 @@ public class GitOperationsServiceImpl implements GitOperationsService {
 
     @Override
     public String extractRepoName(String repoUrl) {
-        String name = repoUrl;
+        // Remove branch part if present (e.g., /tree/branch-name)
+        String cleanUrl = extractCleanRepoUrl(repoUrl);
+
+        String name = cleanUrl;
         if (name.endsWith(".git")) {
             name = name.substring(0, name.length() - 4);
         }
@@ -235,6 +243,60 @@ public class GitOperationsServiceImpl implements GitOperationsService {
         }
 
         return name;
+    }
+
+    /**
+     * Extract branch name from GitHub URL.
+     * Examples:
+     *   https://github.com/user/repo/tree/feature-branch → feature-branch
+     *   https://github.com/user/repo → null (use default)
+     *   https://github.com/user/repo.git → null
+     */
+    public String extractBranchFromUrl(String repoUrl) {
+        if (repoUrl == null || repoUrl.trim().isEmpty()) {
+            return null;
+        }
+
+        // Pattern: /tree/branch-name or /blob/branch-name
+        if (repoUrl.contains("/tree/")) {
+            int treeIndex = repoUrl.indexOf("/tree/");
+            String afterTree = repoUrl.substring(treeIndex + 6); // "/tree/".length() = 6
+            // Remove any trailing path (e.g., /tree/branch/some/file.java)
+            int nextSlash = afterTree.indexOf('/');
+            return nextSlash > 0 ? afterTree.substring(0, nextSlash) : afterTree;
+        }
+
+        if (repoUrl.contains("/blob/")) {
+            int blobIndex = repoUrl.indexOf("/blob/");
+            String afterBlob = repoUrl.substring(blobIndex + 6);
+            int nextSlash = afterBlob.indexOf('/');
+            return nextSlash > 0 ? afterBlob.substring(0, nextSlash) : afterBlob;
+        }
+
+        return null; // No branch in URL
+    }
+
+    @Override
+    public String getCleanRepoUrl(String repoUrl) {
+        if (repoUrl == null) return null;
+
+        // Remove /tree/... or /blob/...
+        if (repoUrl.contains("/tree/")) {
+            return repoUrl.substring(0, repoUrl.indexOf("/tree/"));
+        }
+        if (repoUrl.contains("/blob/")) {
+            return repoUrl.substring(0, repoUrl.indexOf("/blob/"));
+        }
+
+        return repoUrl;
+    }
+
+    /**
+     * DEPRECATED: Use getCleanRepoUrl() instead.
+     * Kept for backward compatibility.
+     */
+    private String extractCleanRepoUrl(String repoUrl) {
+        return getCleanRepoUrl(repoUrl);
     }
 
     // ================================================================

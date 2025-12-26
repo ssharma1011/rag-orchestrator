@@ -368,7 +368,7 @@ public class CodeIndexerAgent {
      * OPTIMIZATION: Reuses workspace and just pulls instead of re-cloning
      */
     private File getOrCloneWorkspace(String repoUrl, String branch, String repoName) {
-        // Define workspace location
+        // Define workspace location - CONSISTENT directory based on repo name
         String workspaceBase = System.getProperty("user.home") + "/ai-workspace";
         File workspace = new File(workspaceBase, repoName);
 
@@ -380,7 +380,7 @@ public class CodeIndexerAgent {
 
                 // Pull latest changes using git command
                 try {
-                    log.info("Pulling latest changes...");
+                    log.info("Pulling latest changes from origin/{} ...", branch);
                     ProcessBuilder pb = new ProcessBuilder("git", "pull", "origin", branch);
                     pb.directory(workspace);
                     pb.redirectErrorStream(true);
@@ -401,9 +401,14 @@ public class CodeIndexerAgent {
             }
         }
 
-        // Clone fresh
-        log.info("🔄 Cloning repository...");
-        return gitService.cloneRepository(repoUrl, branch);
+        // Clone fresh - CRITICAL FIX: Clean URL and use consistent destination
+        log.info("🔄 Cloning repository to consistent workspace: {}", workspace.getAbsolutePath());
+
+        // Remove /tree/branch or /blob/branch from URL before cloning
+        String cleanUrl = gitService.getCleanRepoUrl(repoUrl);
+        log.info("Clean repo URL: {}", cleanUrl);
+
+        return gitService.cloneRepository(cleanUrl, branch, workspace);
     }
 
     /**
@@ -412,9 +417,12 @@ public class CodeIndexerAgent {
      */
     private String getCurrentCommitFromRemote(String repoUrl, String branch) {
         try {
-            log.debug("Querying remote commit for branch: {}", branch);
+            // CRITICAL: Clean URL before querying remote
+            String cleanUrl = gitService.getCleanRepoUrl(repoUrl);
+            log.debug("Querying remote commit for branch: {} at {}", branch, cleanUrl);
+
             ProcessBuilder pb = new ProcessBuilder(
-                    "git", "ls-remote", repoUrl, "refs/heads/" + branch
+                    "git", "ls-remote", cleanUrl, "refs/heads/" + branch
             );
             pb.redirectErrorStream(true);
             Process process = pb.start();

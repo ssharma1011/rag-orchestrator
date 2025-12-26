@@ -2,6 +2,7 @@ package com.purchasingpower.autoflow.workflow.agents;
 
 import com.purchasingpower.autoflow.client.GeminiClient;
 import com.purchasingpower.autoflow.client.PineconeRetriever;
+import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +31,7 @@ public class DocumentationAgent {
     private final PineconeRetriever pineconeRetriever;
     private final GeminiClient geminiClient;
     private final PromptLibraryService promptLibrary;
+    private final GitOperationsService gitService;
 
     public Map<String, Object> execute(WorkflowState state) {
         log.info("📚 Generating documentation for: {}", state.getRequirement());
@@ -50,7 +52,7 @@ public class DocumentationAgent {
             List<Double> queryEmbedding = geminiClient.createEmbedding(requirement);
 
             // Search Pinecone
-            String repoName = extractRepoName(state.getRepoUrl());
+            String repoName = gitService.extractRepoName(state.getRepoUrl());
             List<PineconeRetriever.CodeContext> relevantCode =
                     pineconeRetriever.findRelevantCodeStructured(queryEmbedding, repoName);
 
@@ -126,20 +128,5 @@ public class DocumentationAgent {
 
         // Render using PromptLibraryService
         return promptLibrary.render("documentation-agent", variables);
-    }
-
-    /**
-     * Extract repository name from URL
-     */
-    private String extractRepoName(String repoUrl) {
-        String name = repoUrl;
-        if (name.endsWith(".git")) {
-            name = name.substring(0, name.length() - 4);
-        }
-        int lastSlash = name.lastIndexOf('/');
-        if (lastSlash >= 0) {
-            name = name.substring(lastSlash + 1);
-        }
-        return name;
     }
 }

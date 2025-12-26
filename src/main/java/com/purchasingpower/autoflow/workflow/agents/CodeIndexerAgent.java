@@ -11,6 +11,7 @@ import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.File;
 import java.io.IOException;
@@ -39,16 +40,71 @@ public class CodeIndexerAgent {
     private final IncrementalEmbeddingSyncService embeddingSyncService;
     private final EntityExtractor entityExtractor;
     private final Neo4jGraphStore neo4jGraphStore;
+    private final com.purchasingpower.autoflow.repository.GraphNodeRepository graphNodeRepository;
 
+    @Transactional
     public Map<String, Object> execute(WorkflowState state) {
         log.info("📦 Indexing codebase: {}", state.getRepoUrl());
 
         try {
             Map<String, Object> updates = new HashMap<>(state.toMap());
 
-            // Extract repo name
-            String repoName = extractRepoName(state.getRepoUrl());
+            // Extract repo name using centralized service
+            String repoName = gitService.extractRepoName(state.getRepoUrl());
             log.info("Repository name: {}", repoName);
+
+            // ================================================================
+            // CRITICAL OPTIMIZATION: Skip indexing if already indexed at current commit
+            // ================================================================
+
+            // Check current commit in repo (before cloning)
+            String currentCommit = getCurrentCommitFromRemote(state.getRepoUrl(), state.getBaseBranch());
+            String lastIndexedCommit = embeddingSyncService.getLastIndexedCommit(repoName);
+
+            if (lastIndexedCommit != null && lastIndexedCommit.equals(currentCommit)) {
+                log.info("🚀 OPTIMIZATION: Repository already indexed at current commit {}!",
+                        currentCommit.substring(0, 8));
+                log.info("   ⏭️  Skipping: Clone, Build, Re-indexing");
+                log.info("   💰 Time saved: ~120 seconds");
+
+                // Still need workspace for reading files during code generation
+                File workspace = getOrCloneWorkspace(state.getRepoUrl(), state.getBaseBranch(), repoName);
+                updates.put("workspaceDir", workspace.getAbsolutePath());
+
+                // Create a skipped result
+                IndexingResult skippedResult = IndexingResult.builder()
+                        .success(true)
+                        .filesProcessed(0)
+                        .chunksCreated(0)
+                        .graphNodesCreated(0)
+                        .graphEdgesCreated(0)
+                        .indexedCommit(lastIndexedCommit)
+                        .indexType(IndexingResult.IndexType.SKIPPED)
+                        .errors(new ArrayList<>())
+                        .durationMs(0L)
+                        .build();
+
+                updates.put("indexingResult", skippedResult);
+                updates.put("lastAgentDecision", AgentDecision.proceed(
+                        "Using cached index - no code changes since last indexing"
+                ));
+
+                return updates;
+            }
+
+            log.info("📥 New commit detected or first index - proceeding with full indexing");
+            if (lastIndexedCommit != null) {
+                log.info("   Previous: {}", lastIndexedCommit.substring(0, 8));
+                log.info("   Current:  {}", currentCommit.substring(0, 8));
+            }
+
+            // ================================================================
+            // OPTIMIZATION: Skip build for documentation tasks
+            // ================================================================
+
+            RequirementAnalysis analysis = state.getRequirementAnalysis();
+            boolean isDocumentationTask = analysis != null &&
+                    "documentation".equalsIgnoreCase(analysis.getTaskType());
 
             // ================================================================
             // STEP 1: CLONE OR REUSE WORKSPACE
@@ -63,8 +119,21 @@ public class CodeIndexerAgent {
             // STEP 2: BASELINE BUILD
             // ================================================================
 
-            log.info("🔨 Running baseline build...");
-            BuildResult baseline = buildService.buildAndVerify(workspace);
+            // OPTIMIZATION: Skip build for documentation requests
+            BuildResult baseline;
+            if (isDocumentationTask) {
+                log.info("📚 Documentation request - skipping build validation (saves ~60 seconds)");
+                baseline = BuildResult.builder()
+                        .success(true)
+                        .durationMs(0L)
+                        .buildLogs("Build skipped for documentation request")
+                        .compilationErrors(new ArrayList<>())
+                        .build();
+            } else {
+                log.info("🔨 Running baseline build...");
+                baseline = buildService.buildAndVerify(workspace);
+            }
+
             updates.put("baselineBuild", baseline);
 
             if (!baseline.isSuccess()) {
@@ -131,6 +200,85 @@ public class CodeIndexerAgent {
             log.info("   Methods: {}", combinedGraph.getMethods().size());
             log.info("   Fields: {}", combinedGraph.getFields().size());
             log.info("   Relationships: {}", combinedGraph.getRelationships().size());
+
+            // ================================================================
+            // STEP 4.5: ORACLE CODE_NODES TABLE SYNC
+            // ================================================================
+
+            log.info("🔄 Syncing to Oracle CODE_NODES table...");
+
+            // Convert Neo4j entities to JPA GraphNode entities
+            List<com.purchasingpower.autoflow.model.graph.GraphNode> graphNodes = new ArrayList<>();
+
+            // Convert classes
+            for (var classNode : combinedGraph.getClasses()) {
+                graphNodes.add(com.purchasingpower.autoflow.model.graph.GraphNode.builder()
+                        .nodeId(classNode.getId())
+                        .type(com.purchasingpower.autoflow.model.ast.ChunkType.CLASS)
+                        .repoName(repoName)
+                        .fullyQualifiedName(classNode.getFullyQualifiedName())
+                        .simpleName(classNode.getName())
+                        .packageName(classNode.getPackageName())
+                        .filePath(classNode.getSourceFilePath())
+                        .parentNodeId(null)
+                        .summary(classNode.getJavadoc() != null ? classNode.getJavadoc() : "")
+                        .lineCount(classNode.getEndLine() - classNode.getStartLine())
+                        .domain(null) // Will be populated by LLM later if needed
+                        .businessCapability(null)
+                        .features(null)
+                        .concepts(null)
+                        .build());
+            }
+
+            // Convert methods
+            for (var methodNode : combinedGraph.getMethods()) {
+                graphNodes.add(com.purchasingpower.autoflow.model.graph.GraphNode.builder()
+                        .nodeId(methodNode.getId())
+                        .type(com.purchasingpower.autoflow.model.ast.ChunkType.METHOD)
+                        .repoName(repoName)
+                        .fullyQualifiedName(methodNode.getFullyQualifiedName())
+                        .simpleName(methodNode.getName())
+                        .packageName(methodNode.getClassName().substring(0,
+                                methodNode.getClassName().lastIndexOf('.') > 0 ?
+                                methodNode.getClassName().lastIndexOf('.') : 0))
+                        .filePath(methodNode.getSourceFilePath())
+                        .parentNodeId(methodNode.getClassName()) // Parent is the class
+                        .summary(methodNode.getJavadoc() != null ? methodNode.getJavadoc() : "")
+                        .lineCount(methodNode.getEndLine() - methodNode.getStartLine())
+                        .domain(null)
+                        .businessCapability(null)
+                        .features(null)
+                        .concepts(null)
+                        .build());
+            }
+
+            // Convert fields
+            for (var fieldNode : combinedGraph.getFields()) {
+                graphNodes.add(com.purchasingpower.autoflow.model.graph.GraphNode.builder()
+                        .nodeId(fieldNode.getId())
+                        .type(com.purchasingpower.autoflow.model.ast.ChunkType.FIELD)
+                        .repoName(repoName)
+                        .fullyQualifiedName(fieldNode.getFullyQualifiedName())
+                        .simpleName(fieldNode.getName())
+                        .packageName(fieldNode.getClassName().substring(0,
+                                fieldNode.getClassName().lastIndexOf('.') > 0 ?
+                                fieldNode.getClassName().lastIndexOf('.') : 0))
+                        .filePath(fieldNode.getSourceFilePath())
+                        .parentNodeId(fieldNode.getClassName()) // Parent is the class
+                        .summary(fieldNode.getJavadoc() != null ? fieldNode.getJavadoc() : "")
+                        .lineCount(1)
+                        .domain(null)
+                        .businessCapability(null)
+                        .features(null)
+                        .concepts(null)
+                        .build());
+            }
+
+            // Delete old nodes for this repo and save new ones
+            graphNodeRepository.deleteByRepoName(repoName);
+            graphNodeRepository.saveAll(graphNodes);
+
+            log.info("✅ Oracle CODE_NODES table updated: {} nodes saved", graphNodes.size());
 
             // ================================================================
             // STEP 5: BUILD INDEXING RESULT (USING ACTUAL FIELDS!)
@@ -217,6 +365,7 @@ public class CodeIndexerAgent {
 
     /**
      * Clone repository or reuse existing workspace
+     * OPTIMIZATION: Reuses workspace and just pulls instead of re-cloning
      */
     private File getOrCloneWorkspace(String repoUrl, String branch, String repoName) {
         // Define workspace location
@@ -229,11 +378,22 @@ public class CodeIndexerAgent {
             if (gitDir.exists() && gitDir.isDirectory()) {
                 log.info("✅ Reusing existing workspace: {}", workspace.getAbsolutePath());
 
-                // Pull latest changes (if Git service supports it)
+                // Pull latest changes using git command
                 try {
                     log.info("Pulling latest changes...");
-                    // TODO: Add gitService.pullLatestChanges(workspace) when method exists
-                    return workspace;
+                    ProcessBuilder pb = new ProcessBuilder("git", "pull", "origin", branch);
+                    pb.directory(workspace);
+                    pb.redirectErrorStream(true);
+
+                    Process process = pb.start();
+                    int exitCode = process.waitFor();
+
+                    if (exitCode == 0) {
+                        log.info("✅ Successfully pulled latest changes");
+                        return workspace;
+                    } else {
+                        log.warn("Git pull failed with exit code: {}", exitCode);
+                    }
                 } catch (Exception e) {
                     log.warn("Failed to pull changes: {}", e.getMessage());
                     // Fall through to re-clone
@@ -247,23 +407,35 @@ public class CodeIndexerAgent {
     }
 
     /**
-     * Extract repository name from URL
-     * Example: "https://github.com/user/repo.git" → "repo"
+     * Get current commit hash from remote repository without cloning.
+     * Uses git ls-remote to query the remote HEAD.
      */
-    private String extractRepoName(String repoUrl) {
-        String name = repoUrl;
+    private String getCurrentCommitFromRemote(String repoUrl, String branch) {
+        try {
+            log.debug("Querying remote commit for branch: {}", branch);
+            ProcessBuilder pb = new ProcessBuilder(
+                    "git", "ls-remote", repoUrl, "refs/heads/" + branch
+            );
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
 
-        // Remove .git suffix
-        if (name.endsWith(".git")) {
-            name = name.substring(0, name.length() - 4);
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(process.getInputStream()))) {
+                String line = reader.readLine();
+                if (line != null && line.length() >= 40) {
+                    String commit = line.substring(0, 40);
+                    log.debug("Remote HEAD at: {}", commit.substring(0, 8));
+                    return commit;
+                }
+            }
+
+            process.waitFor();
+            log.warn("Could not determine remote commit, will proceed with full index");
+            return null;
+
+        } catch (Exception e) {
+            log.warn("Failed to query remote commit: {}", e.getMessage());
+            return null;  // Fail safe - proceed with full index if can't check
         }
-
-        // Get last part after /
-        int lastSlash = name.lastIndexOf('/');
-        if (lastSlash >= 0) {
-            name = name.substring(lastSlash + 1);
-        }
-
-        return name;
     }
 }

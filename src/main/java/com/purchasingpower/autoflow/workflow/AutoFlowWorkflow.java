@@ -29,6 +29,7 @@ public class AutoFlowWorkflow {
     private final LogAnalyzerAgent logAnalyzer;
     private final CodeIndexerAgent codeIndexer;
     private final ScopeDiscoveryAgent scopeDiscovery;
+    private final ScopeApprovalAgent scopeApproval;
     private final ContextBuilderAgent contextBuilder;
     private final CodeGeneratorAgent codeGenerator;
     private final BuildValidatorAgent buildValidator;
@@ -50,6 +51,7 @@ public class AutoFlowWorkflow {
         graph.addNode("log_analyzer", node_async(logAnalyzer::execute));
         graph.addNode("code_indexer", node_async(codeIndexer::execute));
         graph.addNode("scope_discovery", node_async(scopeDiscovery::execute));
+        graph.addNode("scope_approval", node_async(scopeApproval::execute));
         graph.addNode("context_builder", node_async(contextBuilder::execute));
         graph.addNode("code_generator", node_async(codeGenerator::execute));
         graph.addNode("build_validator", node_async(buildValidator::execute));
@@ -66,6 +68,14 @@ public class AutoFlowWorkflow {
             return updates;
         }));
 
+        graph.addNode("chat_responder", node_async(s -> {
+            log.info("💬 Responding to casual chat message");
+            Map<String, Object> updates = new java.util.HashMap<>(s.toMap());
+            updates.put("lastAgentDecision", AgentDecision.endSuccess("👋 Hello! I'm ready to help with your codebase. What would you like to work on?"));
+            updates.put("workflowStatus", "COMPLETED");
+            return updates;
+        }));
+
         // Define Edges
         graph.addEdge(START, "requirement_analyzer");
 
@@ -74,25 +84,49 @@ public class AutoFlowWorkflow {
                     RequirementAnalysis analysis = s.getRequirementAnalysis();
 
                     log.info("═══════════════════════════════════════════════════════");
-                    log.info("🔀 ROUTING FROM REQUIREMENT_ANALYZER:");
-                    log.info("   Analysis exists: {}", analysis != null);
+                    log.info("🔀 CAPABILITY-BASED ROUTING:");
                     if (analysis != null) {
-                        log.info("   taskType: '{}'", analysis.getTaskType());
-                        log.info("   Checking: 'DOCUMENTATION'.equals('{}')", analysis.getTaskType());
-                        log.info("   Match: {}", "DOCUMENTATION".equals(analysis.getTaskType()));
+                        log.info("   Task Type: {}", analysis.getTaskType());
+                        log.info("   Data Sources: {}", analysis.getDataSources());
+                        log.info("   Modifies Code: {}", analysis.isModifiesCode());
+                        log.info("   Needs Approval: {}", analysis.isNeedsApproval());
                     }
                     log.info("═══════════════════════════════════════════════════════");
 
-                    if (analysis != null && "DOCUMENTATION".equalsIgnoreCase(analysis.getTaskType())) {
-                        log.info("📚 Routing to documentation agent");
-                        return "code_indexer";  // Still need to index first!
+                    // CAPABILITY-BASED ROUTING (not task type strings)
+                    if (analysis != null) {
+                        // Casual chat - no data sources needed
+                        if (analysis.isCasualChat()) {
+                            log.info("💬 Casual chat → chat_responder");
+                            return "chat_responder";
+                        }
+
+                        // Read-only query needing code context
+                        if (analysis.isReadOnly() && analysis.needsCodeContext()) {
+                            log.info("📚 Read-only code query → code_indexer");
+                            return "code_indexer";
+                        }
+
+                        // Code modification - full workflow
+                        if (analysis.isModifiesCode() && analysis.needsCodeContext()) {
+                            log.info("🔧 Code modification → {}", s.hasLogs() ? "log_analyzer" : "code_indexer");
+                            return s.hasLogs() ? "log_analyzer" : "code_indexer";
+                        }
+
+                        // Future: Confluence-only queries
+                        if (analysis.needsConfluenceContext() && !analysis.needsCodeContext()) {
+                            log.info("📋 Confluence query → confluence_handler (TODO)");
+                            return "chat_responder"; // For now
+                        }
                     }
+
                     if (shouldPause(s)) {
                         return "ask_developer";
                     }
                     return s.hasLogs() ? "log_analyzer" : "code_indexer";
                 }),
                 Map.of(
+                        "chat_responder", "chat_responder",
                         "ask_developer", "ask_developer",
                         "log_analyzer", "log_analyzer",
                         "code_indexer", "code_indexer"
@@ -105,28 +139,35 @@ public class AutoFlowWorkflow {
                     RequirementAnalysis analysis = s.getRequirementAnalysis();
                     log.info("═══════════════════════════════════════════════════════");
                     log.info("🔀 ROUTING FROM CODE_INDEXER:");
-                    log.info("   Analysis exists: {}", analysis != null);
                     if (analysis != null) {
-                        log.info("   taskType: '{}'", analysis.getTaskType());
-                        log.info("   Checking: 'DOCUMENTATION'.equals('{}')", analysis.getTaskType());
-                        log.info("   Match: {}", "DOCUMENTATION".equals(analysis.getTaskType()));
+                        log.info("   Read-only: {}", analysis.isReadOnly());
+                        log.info("   Modifies code: {}", analysis.isModifiesCode());
                     }
                     log.info("═══════════════════════════════════════════════════════");
-                    // NEW: If documentation request, route to documentation agent
-                    if (analysis != null && "DOCUMENTATION".equalsIgnoreCase(analysis.getTaskType())) {
-                        log.info("📚 Routing to documentation agent after indexing");
+
+                    // If read-only query, route to documentation agent
+                    if (analysis != null && analysis.isReadOnly()) {
+                        log.info("📚 Read-only query → documentation_agent");
                         return "documentation_agent";
                     }
 
-                    // Original logic
                     if (shouldPause(s)) {
                         return "ask_developer";
                     }
+
+                    // CRITICAL FIX: If scope proposal exists and user just responded, validate approval
+                    if (s.getScopeProposal() != null && userJustResponded(s)) {
+                        log.info("✅ Scope proposal exists + user responded → Validating approval");
+                        return "scope_approval";
+                    }
+
+                    // Otherwise, run scope discovery
                     return "scope_discovery";
                 }),
                 Map.of(
                         "scope_discovery", "scope_discovery",
-                        "documentation_agent", "documentation_agent",  // NEW!
+                        "scope_approval", "scope_approval",
+                        "documentation_agent", "documentation_agent",
                         "ask_developer", "ask_developer"
                 )
         );
@@ -134,6 +175,10 @@ public class AutoFlowWorkflow {
         graph.addEdge("documentation_agent", END);
 
         graph.addConditionalEdges("scope_discovery",
+                edge_async(s -> shouldPause(s) ? "ask_developer" : "context_builder"),
+                Map.of("context_builder", "context_builder", "ask_developer", "ask_developer"));
+
+        graph.addConditionalEdges("scope_approval",
                 edge_async(s -> shouldPause(s) ? "ask_developer" : "context_builder"),
                 Map.of("context_builder", "context_builder", "ask_developer", "ask_developer"));
 
@@ -159,6 +204,7 @@ public class AutoFlowWorkflow {
         graph.addEdge("pr_creator", END);
 
         graph.addEdge("ask_developer", END);
+        graph.addEdge("chat_responder", END);
 
         this.compiledGraph = graph.compile();
     }
@@ -187,6 +233,21 @@ public class AutoFlowWorkflow {
     private boolean shouldPause(WorkflowState state) {
         return state.getLastAgentDecision() != null &&
                 state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.ASK_DEV;
+    }
+
+    /**
+     * Check if user just responded to a question.
+     * Used to detect when we need to validate approval instead of re-running agents.
+     */
+    private boolean userJustResponded(WorkflowState state) {
+        var history = state.getConversationHistory();
+        if (history == null || history.size() < 2) {
+            return false;
+        }
+
+        // Check if last message is from user
+        var lastMessage = history.get(history.size() - 1);
+        return "user".equals(lastMessage.getRole());
     }
 
     private String routeFromBuildValidator(WorkflowState state) {

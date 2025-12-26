@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -60,27 +61,86 @@ public class RequirementAnalyzerAgent {
             Map<String, Object> updates = new HashMap<>(state.toMap());
             updates.put("requirementAnalysis", analysis);
 
+            // NEW: Check if this is a repeat question (conversation history exists)
+            if (!analysis.getQuestions().isEmpty() &&
+                    conversationHistory != null &&
+                    !conversationHistory.isEmpty()) {
+
+                log.warn("⚠️ LLM asked questions despite having conversation history!");
+                log.warn("Questions: {}", analysis.getQuestions());
+
+                // Check if questions were already answered
+                String lastUserMessage = conversationHistory.stream()
+                        .filter(msg -> "user".equals(msg.getRole()))
+                        .reduce((first, second) -> second)  // Get last
+                        .map(ChatMessage::getContent)
+                        .orElse("");
+
+                if (!lastUserMessage.isEmpty()) {
+                    log.info("✅ User already responded. Proceeding without asking again.");
+                    analysis.setQuestions(new ArrayList<>());  // Clear questions
+                }
+            }
+
+            // Skip questions for documentation tasks
+            boolean isDocumentationTask = "documentation".equalsIgnoreCase(analysis.getTaskType());
+
             // Check confidence
             if (analysis.getConfidence() < 0.7) {
                 log.warn("⚠️ Low confidence ({}) - requesting clarification",
                         String.format("%.0f%%", analysis.getConfidence() * 100));
 
-                updates.put("lastAgentDecision", AgentDecision.askDev(
-                        "⚠️ **Unclear Requirement**\n\n" +
-                                "Confidence: " + String.format("%.0f%%", analysis.getConfidence() * 100) + "\n\n" +
-                                "**Questions:**\n" + String.join("\n", analysis.getQuestions())
-                ));
+                String clarificationMessage = "⚠️ **Unclear Requirement**\n\n" +
+                        "Confidence: " + String.format("%.0f%%", analysis.getConfidence() * 100) + "\n\n" +
+                        "**Questions:**\n" + String.join("\n", analysis.getQuestions());
+
+                // CRITICAL FIX: Add assistant's clarification request to conversation history
+                List<ChatMessage> updatedHistory = new ArrayList<>(
+                        conversationHistory != null ? conversationHistory : new ArrayList<>());
+
+                ChatMessage assistantMessage = new ChatMessage();
+                assistantMessage.setRole("assistant");
+                assistantMessage.setContent(clarificationMessage);
+                assistantMessage.setTimestamp(java.time.LocalDateTime.now());
+                updatedHistory.add(assistantMessage);
+
+                updates.put("conversationHistory", updatedHistory);
+                updates.put("lastAgentDecision", AgentDecision.askDev(clarificationMessage));
+
+                log.debug("✅ Added clarification request to conversation history");
                 return updates;
             }
 
-            // Check for clarifying questions
-            if (!analysis.getQuestions().isEmpty()) {
+            // Check for clarifying questions (only if not documentation task)
+            if (!isDocumentationTask && !analysis.getQuestions().isEmpty()) {
                 log.info("📋 Need clarification - {} questions", analysis.getQuestions().size());
 
-                updates.put("lastAgentDecision", AgentDecision.askDev(
-                        "📋 **Need Clarification**\n\n" + String.join("\n", analysis.getQuestions())
-                ));
+                String questionsMessage = "📋 **Need Clarification**\n\n" +
+                        "Please answer ALL questions below:\n\n" +
+                        String.join("\n", analysis.getQuestions());
+
+                // CRITICAL FIX: Add assistant's questions to conversation history
+                // so when user responds, LLM knows what questions it asked
+                List<ChatMessage> updatedHistory = new ArrayList<>(
+                        conversationHistory != null ? conversationHistory : new ArrayList<>());
+
+                ChatMessage assistantMessage = new ChatMessage();
+                assistantMessage.setRole("assistant");
+                assistantMessage.setContent(questionsMessage);
+                assistantMessage.setTimestamp(java.time.LocalDateTime.now());
+                updatedHistory.add(assistantMessage);
+
+                updates.put("conversationHistory", updatedHistory);
+                updates.put("lastAgentDecision", AgentDecision.askDev(questionsMessage));
+
+                log.debug("✅ Added {} questions to conversation history", analysis.getQuestions().size());
                 return updates;
+            }
+
+            // If documentation task had questions, clear them
+            if (isDocumentationTask && !analysis.getQuestions().isEmpty()) {
+                log.info("📚 Documentation task - clearing {} questions", analysis.getQuestions().size());
+                analysis.setQuestions(new ArrayList<>());
             }
 
             // All clear! Proceed
@@ -106,23 +166,14 @@ public class RequirementAnalyzerAgent {
      * Analyze requirement with LLM, including conversation history for context.
      */
     private RequirementAnalysis analyzeWithLLM(WorkflowState state, List<ChatMessage> history) {
-        // Build context from conversation history
-        StringBuilder contextBuilder = new StringBuilder();
-        contextBuilder.append("**Requirement:** ").append(state.getRequirement()).append("\n\n");
-
-        if (history != null && !history.isEmpty()) {
-            contextBuilder.append("**Previous Conversation:**\n");
-            for (ChatMessage msg : history) {
-                contextBuilder.append(msg.getRole()).append(": ")
-                        .append(msg.getContent()).append("\n");
-            }
-        }
+        // Format conversation history for LLM
+        String conversationHistory = formatConversationHistory(history);
 
         String prompt = promptLibrary.render("requirement-analyzer", Map.of(
                 "requirement", state.getRequirement(),
                 "targetClass", state.getTargetClass() != null ? state.getTargetClass() : "",
                 "hasLogs", state.hasLogs(),
-                "conversationContext", contextBuilder.toString()
+                "conversationHistory", conversationHistory
         ));
 
         String llmResponse = geminiClient.callChatApi(prompt, "requirement-analyzer");
@@ -134,20 +185,11 @@ public class RequirementAnalyzerAgent {
                     .replaceAll("```", "")
                     .trim();
 
-            log.info("═══════════════════════════════════════════════════════");
-            log.info("🔍 RAW LLM RESPONSE FROM REQUIREMENT ANALYZER:");
-            log.info(llmResponse);
-            log.info("═══════════════════════════════════════════════════════");
-
-
             RequirementAnalysis analysis = objectMapper.readValue(cleanJson, RequirementAnalysis.class);
-            log.info("📊 PARSED RequirementAnalysis:");
-            log.info("   taskType: '{}'", analysis.getTaskType());
-            log.info("   domain: '{}'", analysis.getDomain());
-            log.info("   summary: '{}'", analysis.getSummary());
-            log.info("   confidence: {}", analysis.getConfidence());
-            log.info("   questions: {}", analysis.getQuestions());
-            log.info("═══════════════════════════════════════════════════════");
+
+            log.debug("📊 Requirement analysis: taskType='{}', domain='{}', confidence={}, questions={}",
+                    analysis.getTaskType(), analysis.getDomain(), analysis.getConfidence(),
+                    analysis.getQuestions().size());
 
 
             return analysis;
@@ -164,5 +206,22 @@ public class RequirementAnalyzerAgent {
                     .confidence(0.5)
                     .build();
         }
+    }
+
+    /**
+     * Format conversation history for LLM prompts.
+     */
+    private String formatConversationHistory(List<ChatMessage> history) {
+        if (history == null || history.isEmpty()) {
+            return "This is the first message in the conversation.";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (ChatMessage msg : history) {
+            sb.append(String.format("[%s]: %s\n",
+                    msg.getRole().toUpperCase(),
+                    msg.getContent()));
+        }
+        return sb.toString();
     }
 }

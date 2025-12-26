@@ -134,7 +134,18 @@ public class ScopeProposal implements Serializable {
             return "  (none)";
         }
         return actions.stream()
-                .map(a -> String.format("  - %s (%s)", a.getFilePath(), a.getReason()))
+                .map(a -> {
+                    StringBuilder sb = new StringBuilder();
+                    sb.append(String.format("  - %s (%s)", a.getFilePath(), a.getReason()));
+
+                    // Add method-level details if available
+                    if (a.getTargetMethods() != null && !a.getTargetMethods().isEmpty()) {
+                        sb.append("\n    Target methods: ");
+                        sb.append(String.join(", ", a.getTargetMethods()));
+                    }
+
+                    return sb.toString();
+                })
                 .reduce((a, b) -> a + "\n" + b)
                 .orElse("  (none)");
     }

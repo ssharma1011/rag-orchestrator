@@ -2,6 +2,7 @@ package com.purchasingpower.autoflow.service.impl;
 
 import com.purchasingpower.autoflow.model.workflow.WorkflowStateEntity;
 import com.purchasingpower.autoflow.repository.WorkflowStateRepository;
+import com.purchasingpower.autoflow.service.ConversationService;
 import com.purchasingpower.autoflow.service.WorkflowExecutionService;
 import com.purchasingpower.autoflow.workflow.AutoFlowWorkflow;
 import com.purchasingpower.autoflow.workflow.state.AgentDecision;
@@ -9,18 +10,18 @@ import com.purchasingpower.autoflow.workflow.state.WorkflowState;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Async;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 
 /**
- * FIXED: No longer calls setters on WorkflowState after LangGraph4j processing.
- *
- * Uses Map manipulation instead to avoid UnsupportedOperationException.
+ * FIXED: Uses direct executor injection instead of @Async.
+ * Submits tasks directly to thread pool - no AOP, no proxies, no issues!
  */
 @Slf4j
 @Service
@@ -29,7 +30,12 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
 
     private final AutoFlowWorkflow autoFlowWorkflow;
     private final WorkflowStateRepository stateRepository;
+    private final ConversationService conversationService;
     private final ObjectMapper objectMapper;
+
+    // Direct injection of the async executor - much simpler than @Async!
+    @Qualifier("workflowExecutor")
+    private final Executor workflowExecutor;
 
     private final ConcurrentHashMap<String, WorkflowState> activeWorkflows = new ConcurrentHashMap<>();
 
@@ -57,8 +63,9 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
             // Cache it
             activeWorkflows.put(runningState.getConversationId(), runningState);
 
-            // Execute workflow asynchronously
-            executeWorkflowAsync(runningState);
+            // Submit workflow execution to async thread pool - returns immediately!
+            log.info("🚀 Submitting workflow to async executor...");
+            workflowExecutor.execute(() -> executeWorkflow(runningState));
 
             return runningState;
 
@@ -84,8 +91,9 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
             // Update cache
             activeWorkflows.put(runningState.getConversationId(), runningState);
 
-            // Continue execution asynchronously
-            executeWorkflowAsync(runningState);
+            // Resume workflow execution in async thread pool - returns immediately!
+            log.info("🚀 Resuming workflow in async executor...");
+            workflowExecutor.execute(() -> executeWorkflow(runningState));
 
             return runningState;
 
@@ -150,10 +158,14 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
         }
     }
 
-    @Async
-    protected void executeWorkflowAsync(WorkflowState state) {
+    /**
+     * Execute workflow in background thread.
+     * Called via workflowExecutor.execute() - runs in thread pool.
+     */
+    private void executeWorkflow(WorkflowState state) {
         try {
-            log.info("Executing workflow async: {}", state.getConversationId());
+            log.info("🚀 [ASYNC THREAD {}] Executing workflow: {}",
+                    Thread.currentThread().getName(), state.getConversationId());
 
             // Execute the LangGraph4j workflow
             WorkflowState result = autoFlowWorkflow.execute(state);
@@ -184,6 +196,17 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
 
     private void saveWorkflowState(WorkflowState state) {
         try {
+            // ================================================================
+            // CRITICAL FIX: Persist conversation history to normalized tables
+            // ================================================================
+            // This was the root cause of empty CONVERSATION_MESSAGES and
+            // CONVERSATION_CONTEXT tables. We were only saving to WORKFLOW_STATES
+            // as JSON, but never persisting to normalized tables.
+            conversationService.saveConversationFromWorkflowState(state);
+
+            // ================================================================
+            // Also save to WORKFLOW_STATES (JSON snapshot for compatibility)
+            // ================================================================
             // Serialize state to JSON
             String stateJson = objectMapper.writeValueAsString(state);
 

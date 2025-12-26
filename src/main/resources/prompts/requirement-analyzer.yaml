@@ -44,21 +44,11 @@ userPrompt: |
   **PREVIOUS CONVERSATION:**
   {{conversationHistory}}
 
-  IMPORTANT: The developer may have already provided context above.
-  - DO NOT ask questions that were already answered
-  - If you have NEW questions, ask them ALL at once
+  IMPORTANT: Review the conversation history above.
+  - The developer may have already provided context
+  - If this is just a greeting or conversational message with no task, respond naturally
+  - If you have questions, ask them ALL at once
   - If you have enough information, proceed with confidence
-
-  CRITICAL: If the requirement is just a greeting (hi, hello, hey) with NO actual task:
-  - Set confidence to 0.0
-  - Set taskType to "unknown"
-  - Ask: "What would you like me to help you build or fix?"
-
-  CRITICAL: If the requirement is conversational/contextual with NO actual task:
-  - Examples: "our conversation was cut off", "what were we discussing?", "I see", "ok", "thanks", "continue"
-  - Set confidence to 0.0
-  - Set taskType to "unknown"
-  - Respond: "I don't have context from previous conversations. Please describe what you'd like me to help you with."
 
   Determine:
   1. Task type:

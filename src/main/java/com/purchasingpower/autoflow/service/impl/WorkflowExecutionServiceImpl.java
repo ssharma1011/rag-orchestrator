@@ -2,6 +2,7 @@ package com.purchasingpower.autoflow.service.impl;
 
 import com.purchasingpower.autoflow.model.workflow.WorkflowStateEntity;
 import com.purchasingpower.autoflow.repository.WorkflowStateRepository;
+import com.purchasingpower.autoflow.service.ConversationService;
 import com.purchasingpower.autoflow.service.WorkflowExecutionService;
 import com.purchasingpower.autoflow.workflow.AutoFlowWorkflow;
 import com.purchasingpower.autoflow.workflow.state.AgentDecision;
@@ -29,6 +30,7 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
 
     private final AutoFlowWorkflow autoFlowWorkflow;
     private final WorkflowStateRepository stateRepository;
+    private final ConversationService conversationService;
     private final ObjectMapper objectMapper;
 
     // Direct injection of the async executor - much simpler than @Async!
@@ -194,6 +196,17 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
 
     private void saveWorkflowState(WorkflowState state) {
         try {
+            // ================================================================
+            // CRITICAL FIX: Persist conversation history to normalized tables
+            // ================================================================
+            // This was the root cause of empty CONVERSATION_MESSAGES and
+            // CONVERSATION_CONTEXT tables. We were only saving to WORKFLOW_STATES
+            // as JSON, but never persisting to normalized tables.
+            conversationService.saveConversationFromWorkflowState(state);
+
+            // ================================================================
+            // Also save to WORKFLOW_STATES (JSON snapshot for compatibility)
+            // ================================================================
             // Serialize state to JSON
             String stateJson = objectMapper.writeValueAsString(state);
 

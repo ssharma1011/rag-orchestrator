@@ -54,9 +54,18 @@ public class WorkflowController {
             // Start workflow asynchronously - returns immediately
             WorkflowState runningState = workflowService.startWorkflow(initialState);
 
-            // Return 202 Accepted with conversationId
+            // Return 202 Accepted with friendly initial message
+            // Override the message for initial response (workflow continues in background)
             return ResponseEntity.accepted()
-                    .body(WorkflowResponse.fromState(runningState));
+                    .body(WorkflowResponse.builder()
+                            .success(true)
+                            .conversationId(runningState.getConversationId())
+                            .status(runningState.getWorkflowStatus())
+                            .currentAgent(runningState.getCurrentAgent())
+                            .message("🚀 **Working on your request...**\n\nI'm analyzing your requirements and will update you shortly.")
+                            .awaitingUserInput(false)
+                            .progress(5)
+                            .build());
 
         } catch (Exception e) {
             log.error("Failed to start workflow", e);

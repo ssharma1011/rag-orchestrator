@@ -51,10 +51,12 @@ userPrompt: |
 
   Determine:
   1. Task type:
-     - "documentation" = User wants explanation/understanding (read-only)
-     - "bug_fix" = Fix a specific bug
-     - "feature" = Add new functionality  
-     - "refactor" = Improve code structure
+     - "documentation" = User wants explanation/understanding/learning (read-only)
+       Examples: "explain the code", "how does X work?", "what is the architecture?",
+                 "show me the codebase", "understand the system", "document this"
+     - "bug_fix" = Fix a specific bug/error/issue
+     - "feature" = Add new functionality/capability
+     - "refactor" = Improve code structure/organization
      - "test" = Add/modify tests
   
   2. Domain (payment, user, order, etc.) - make best guess if unclear

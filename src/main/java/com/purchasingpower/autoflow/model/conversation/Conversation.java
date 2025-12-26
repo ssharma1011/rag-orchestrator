@@ -50,7 +50,7 @@ public class Conversation {
      * - REVIEW: Reviewing proposed changes
      */
     @Enumerated(EnumType.STRING)
-    @Column(name = "mode", length = 20)
+    @Column(name = "conversation_mode", length = 20)
     private ConversationMode mode;
 
     /**

@@ -572,17 +572,27 @@ public class ScopeDiscoveryAgent {
 
         StringBuilder purpose = new StringBuilder();
 
-        // Infer from type
-        String type = node.getType();
-        if ("CLASS".equals(type)) {
+        // Infer from ChunkType enum
+        com.purchasingpower.autoflow.model.ast.ChunkType type = node.getType();
+        if (type == com.purchasingpower.autoflow.model.ast.ChunkType.CLASS) {
             purpose.append("Class");
-        } else if ("METHOD".equals(type)) {
+        } else if (type == com.purchasingpower.autoflow.model.ast.ChunkType.METHOD) {
             purpose.append("Method");
+        } else if (type == com.purchasingpower.autoflow.model.ast.ChunkType.INTERFACE) {
+            purpose.append("Interface");
+        } else if (type == com.purchasingpower.autoflow.model.ast.ChunkType.ENUM) {
+            purpose.append("Enum");
+        } else if (type == com.purchasingpower.autoflow.model.ast.ChunkType.CONSTRUCTOR) {
+            purpose.append("Constructor");
+        } else if (type == com.purchasingpower.autoflow.model.ast.ChunkType.FIELD) {
+            purpose.append("Field");
+        } else if (type == com.purchasingpower.autoflow.model.ast.ChunkType.ANNOTATION) {
+            purpose.append("Annotation");
         }
 
-        // Infer from simple name patterns
+        // Infer from simple name patterns (only for CLASS type)
         String simpleName = node.getSimpleName();
-        if (simpleName != null) {
+        if (simpleName != null && type == com.purchasingpower.autoflow.model.ast.ChunkType.CLASS) {
             if (simpleName.endsWith("Controller")) {
                 purpose.append(" - REST API controller handling HTTP requests");
             } else if (simpleName.endsWith("Service") || simpleName.endsWith("ServiceImpl")) {
@@ -602,6 +612,9 @@ public class ScopeDiscoveryAgent {
             } else {
                 purpose.append(" - ").append(simpleName);
             }
+        } else if (simpleName != null) {
+            // For non-class types, just append the name
+            purpose.append(" - ").append(simpleName);
         }
 
         // Add domain if available

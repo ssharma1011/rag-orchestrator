@@ -84,25 +84,42 @@ public class AutoFlowWorkflow {
                     RequirementAnalysis analysis = s.getRequirementAnalysis();
 
                     log.info("═══════════════════════════════════════════════════════");
-                    log.info("🔀 ROUTING FROM REQUIREMENT_ANALYZER:");
-                    log.info("   Analysis exists: {}", analysis != null);
+                    log.info("🔀 CAPABILITY-BASED ROUTING:");
                     if (analysis != null) {
-                        log.info("   taskType: '{}'", analysis.getTaskType());
-                        log.info("   Checking: 'DOCUMENTATION'.equals('{}')", analysis.getTaskType());
-                        log.info("   Match: {}", "DOCUMENTATION".equals(analysis.getTaskType()));
+                        log.info("   Task Type: {}", analysis.getTaskType());
+                        log.info("   Data Sources: {}", analysis.getDataSources());
+                        log.info("   Modifies Code: {}", analysis.isModifiesCode());
+                        log.info("   Needs Approval: {}", analysis.isNeedsApproval());
                     }
                     log.info("═══════════════════════════════════════════════════════");
 
-                    // Handle casual chat/greetings - no code processing needed
-                    if (analysis != null && "CHAT".equalsIgnoreCase(analysis.getTaskType())) {
-                        log.info("💬 Chat message detected - responding directly");
-                        return "chat_responder";
+                    // CAPABILITY-BASED ROUTING (not task type strings)
+                    if (analysis != null) {
+                        // Casual chat - no data sources needed
+                        if (analysis.isCasualChat()) {
+                            log.info("💬 Casual chat → chat_responder");
+                            return "chat_responder";
+                        }
+
+                        // Read-only query needing code context
+                        if (analysis.isReadOnly() && analysis.needsCodeContext()) {
+                            log.info("📚 Read-only code query → code_indexer");
+                            return "code_indexer";
+                        }
+
+                        // Code modification - full workflow
+                        if (analysis.isModifiesCode() && analysis.needsCodeContext()) {
+                            log.info("🔧 Code modification → {}", s.hasLogs() ? "log_analyzer" : "code_indexer");
+                            return s.hasLogs() ? "log_analyzer" : "code_indexer";
+                        }
+
+                        // Future: Confluence-only queries
+                        if (analysis.needsConfluenceContext() && !analysis.needsCodeContext()) {
+                            log.info("📋 Confluence query → confluence_handler (TODO)");
+                            return "chat_responder"; // For now
+                        }
                     }
 
-                    if (analysis != null && "DOCUMENTATION".equalsIgnoreCase(analysis.getTaskType())) {
-                        log.info("📚 Routing to documentation agent");
-                        return "code_indexer";  // Still need to index first!
-                    }
                     if (shouldPause(s)) {
                         return "ask_developer";
                     }
@@ -122,17 +139,15 @@ public class AutoFlowWorkflow {
                     RequirementAnalysis analysis = s.getRequirementAnalysis();
                     log.info("═══════════════════════════════════════════════════════");
                     log.info("🔀 ROUTING FROM CODE_INDEXER:");
-                    log.info("   Analysis exists: {}", analysis != null);
                     if (analysis != null) {
-                        log.info("   taskType: '{}'", analysis.getTaskType());
-                        log.info("   Checking: 'DOCUMENTATION'.equals('{}')", analysis.getTaskType());
-                        log.info("   Match: {}", "DOCUMENTATION".equals(analysis.getTaskType()));
+                        log.info("   Read-only: {}", analysis.isReadOnly());
+                        log.info("   Modifies code: {}", analysis.isModifiesCode());
                     }
                     log.info("═══════════════════════════════════════════════════════");
 
-                    // If documentation request, route to documentation agent
-                    if (analysis != null && "DOCUMENTATION".equalsIgnoreCase(analysis.getTaskType())) {
-                        log.info("📚 Routing to documentation agent after indexing");
+                    // If read-only query, route to documentation agent
+                    if (analysis != null && analysis.isReadOnly()) {
+                        log.info("📚 Read-only query → documentation_agent");
                         return "documentation_agent";
                     }
 

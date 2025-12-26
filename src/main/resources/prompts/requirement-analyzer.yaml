@@ -92,10 +92,33 @@ userPrompt: |
     "detailedDescription": "What needs to be done",
     "keyVerbs": ["explain", "document"] or ["add", "fix"],
     "questions": [],
-    "confidence": 0.95
+    "confidence": 0.95,
+
+    "dataSources": ["code"],
+    "modifiesCode": false,
+    "needsApproval": false
   }
 
-  IMPORTANT: For chat/greetings, use taskType="chat" with high confidence
+  CRITICAL CAPABILITY FIELDS:
+  - dataSources: Which data sources are needed?
+    * ["code"] = needs code indexing/Neo4j (fix bugs, add features, explain code)
+    * [] = no data needed (casual chat: "hi", "thanks")
+    * ["confluence"] = needs product docs (future: "what's our refund policy?")
+    * ["code", "confluence"] = needs both (future: "how does payment flow work?")
+
+  - modifiesCode: Will this change code?
+    * true = bug_fix, feature, refactor (needs PR, testing, approval)
+    * false = chat, documentation (read-only)
+
+  - needsApproval: Pause for user approval?
+    * true = large changes, risky operations
+    * false = simple fixes, documentation
+
+  EXAMPLES:
+  - "hi" → dataSources=[], modifiesCode=false, needsApproval=false
+  - "explain PaymentService" → dataSources=["code"], modifiesCode=false, needsApproval=false
+  - "add retry logic" → dataSources=["code"], modifiesCode=true, needsApproval=false
+  - "refactor entire payment module" → dataSources=["code"], modifiesCode=true, needsApproval=true
 
   CRITICAL:
   - For documentation tasks: questions array MUST be EMPTY

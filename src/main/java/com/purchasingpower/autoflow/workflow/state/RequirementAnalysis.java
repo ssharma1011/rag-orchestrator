@@ -62,6 +62,34 @@ public class RequirementAnalysis implements Serializable {
     private double confidence;
 
     // ================================================================
+    // CAPABILITY-BASED ROUTING FIELDS
+    // ================================================================
+
+    /**
+     * Data sources needed to answer this query.
+     * Examples: ["code"], ["confluence"], ["code", "confluence"]
+     * Future: ["jira"], ["slack"], etc.
+     */
+    @Builder.Default
+    private List<String> dataSources = new ArrayList<>();
+
+    /**
+     * Does this task modify code?
+     * true = needs PR creation, approval, testing
+     * false = read-only query
+     */
+    @Builder.Default
+    private boolean modifiesCode = false;
+
+    /**
+     * Does this need user approval before proceeding?
+     * true = pause for approval (e.g., large refactor)
+     * false = proceed automatically (e.g., simple bug fix)
+     */
+    @Builder.Default
+    private boolean needsApproval = false;
+
+    // ================================================================
     // CUSTOM GETTERS - GUARANTEE NON-NULL LISTS
     // ================================================================
 
@@ -79,23 +107,42 @@ public class RequirementAnalysis implements Serializable {
         return questions;
     }
 
-    /**
-     * Builder customization to ensure default values
-     */
-    public static class RequirementAnalysisBuilder {
-        public RequirementAnalysis build() {
-            if (keyVerbs == null) keyVerbs = new ArrayList<>();
-            if (questions == null) questions = new ArrayList<>();
-
-            return new RequirementAnalysis(
-                    taskType,
-                    domain,
-                    summary,
-                    detailedDescription,
-                    keyVerbs,
-                    questions,
-                    confidence
-            );
+    public List<String> getDataSources() {
+        if (dataSources == null) {
+            dataSources = new ArrayList<>();
         }
+        return dataSources;
+    }
+
+    // ================================================================
+    // ROUTING HELPER METHODS
+    // ================================================================
+
+    /**
+     * Is this a read-only query (no code changes)?
+     */
+    public boolean isReadOnly() {
+        return !modifiesCode;
+    }
+
+    /**
+     * Does this need code context from Neo4j/indexing?
+     */
+    public boolean needsCodeContext() {
+        return getDataSources().contains("code");
+    }
+
+    /**
+     * Does this need Confluence documentation?
+     */
+    public boolean needsConfluenceContext() {
+        return getDataSources().contains("confluence");
+    }
+
+    /**
+     * Is this just casual chat (no data sources needed)?
+     */
+    public boolean isCasualChat() {
+        return "chat".equalsIgnoreCase(taskType) || getDataSources().isEmpty();
     }
 }

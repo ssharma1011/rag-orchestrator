@@ -2,11 +2,13 @@ package com.purchasingpower.autoflow.workflow.agents;
 
 import com.purchasingpower.autoflow.model.neo4j.ParsedCodeGraph;
 import com.purchasingpower.autoflow.model.sync.EmbeddingSyncResult;
+import com.purchasingpower.autoflow.model.sync.SyncType;
 import com.purchasingpower.autoflow.parser.EntityExtractor;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.IncrementalEmbeddingSyncService;
 import com.purchasingpower.autoflow.service.MavenBuildService;
 import com.purchasingpower.autoflow.storage.Neo4jGraphStore;
+import com.purchasingpower.autoflow.util.GitUrlParser;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -49,16 +51,20 @@ public class CodeIndexerAgent {
         try {
             Map<String, Object> updates = new HashMap<>(state.toMap());
 
-            // Extract repo name using centralized service
-            String repoName = gitService.extractRepoName(state.getRepoUrl());
-            log.info("Repository name: {}", repoName);
+            // Parse Git URL to extract clean repo URL and branch
+            GitUrlParser.ParsedGitUrl parsed = GitUrlParser.parse(state.getRepoUrl());
+            String cleanRepoUrl = parsed.getRepoUrl();
+            String branch = parsed.getBranch();
+            String repoName = parsed.getRepoName();
+
+            log.info("Parsed URL: repo={}, branch={}, name={}", cleanRepoUrl, branch, repoName);
 
             // ================================================================
             // CRITICAL OPTIMIZATION: Skip indexing if already indexed at current commit
             // ================================================================
 
-            // Check current commit in repo (before cloning)
-            String currentCommit = getCurrentCommitFromRemote(state.getRepoUrl(), state.getBaseBranch());
+            // Check current commit in repo (before cloning) - use clean URL
+            String currentCommit = getCurrentCommitFromRemote(cleanRepoUrl, branch);
             String lastIndexedCommit = embeddingSyncService.getLastIndexedCommit(repoName);
 
             if (lastIndexedCommit != null && lastIndexedCommit.equals(currentCommit)) {
@@ -68,7 +74,7 @@ public class CodeIndexerAgent {
                 log.info("   💰 Time saved: ~120 seconds");
 
                 // Still need workspace for reading files during code generation
-                File workspace = getOrCloneWorkspace(state.getRepoUrl(), state.getBaseBranch(), repoName);
+                File workspace = getOrCloneWorkspace(cleanRepoUrl, branch, repoName);
                 updates.put("workspaceDir", workspace.getAbsolutePath());
 
                 // Create a skipped result
@@ -110,7 +116,7 @@ public class CodeIndexerAgent {
             // STEP 1: CLONE OR REUSE WORKSPACE
             // ================================================================
 
-            File workspace = getOrCloneWorkspace(state.getRepoUrl(), state.getBaseBranch(), repoName);
+            File workspace = getOrCloneWorkspace(cleanRepoUrl, branch, repoName);
             updates.put("workspaceDir", workspace.getAbsolutePath());  // CRITICAL: Store as String!
 
             log.info("✅ Workspace ready: {}", workspace.getAbsolutePath());
@@ -160,6 +166,46 @@ public class CodeIndexerAgent {
             log.info("   Chunks created: {}", syncResult.getChunksCreated());
             log.info("   Chunks deleted: {}", syncResult.getChunksDeleted());
             log.info("   Duration: {}ms", syncResult.getTotalTimeMs());
+
+            // CRITICAL: Handle Pinecone sync failures intelligently
+            // ✅ Fixed: SyncType is a separate class, not nested in EmbeddingSyncResult
+            if (syncResult.getSyncType() == SyncType.ERROR) {
+                // Reuse the analysis variable from line 110 (already defined)
+
+                // For CODE CHANGES: Fail fast (need semantic search for quality)
+                if (analysis != null && analysis.isModifiesCode()) {
+                    log.error("❌ Pinecone sync failed for code modification - CANNOT PROCEED");
+                    log.error("   Reason: Need semantic search for quality code generation");
+
+                    // ✅ Fixed: EmbeddingSyncResult has no getErrors() method
+                    IndexingResult errorResult = IndexingResult.builder()
+                            .success(false)
+                            .errors(List.of("Pinecone sync failed - check logs for details"))
+                            .indexType(IndexingResult.IndexType.FULL)
+                            .build();
+
+                    String errorMessage = "❌ **Cannot Proceed with Code Changes**\n\n" +
+                            "Pinecone embedding sync failed, which means we cannot perform semantic code search.\n\n" +
+                            "**Why this matters for code changes:**\n" +
+                            "- Without semantic search, we might miss important patterns\n" +
+                            "- Code quality would be significantly degraded\n" +
+                            "- Risk of creating broken PRs that waste developer time\n\n" +
+                            "**What to do:**\n" +
+                            "1. Check Pinecone service status\n" +
+                            "2. Review application logs for error details\n" +
+                            "3. Try again once Pinecone is healthy\n\n" +
+                            "Check the logs for more information about the failure.";
+
+                    updates.put("indexingResult", errorResult);
+                    updates.put("lastAgentDecision", AgentDecision.error(errorMessage));
+                    return updates;
+                }
+
+                // For READ-ONLY (Documentation): Degrade gracefully
+                log.warn("⚠️ Pinecone sync failed but continuing for read-only query");
+                log.warn("   Fallback: Will use Neo4j graph + Oracle entities instead");
+                // Continue to Neo4j/Oracle sync - DocumentationAgent will handle fallback
+            }
 
             // ================================================================
             // STEP 4: NEO4J GRAPH UPDATE
@@ -338,8 +384,26 @@ public class CodeIndexerAgent {
                     .indexType(IndexingResult.IndexType.FULL)
                     .build();
 
+            // Create user-friendly error message
+            String errorMessage;
+            if (e.getMessage() != null && e.getMessage().contains("Invalid remote")) {
+                errorMessage = "❌ **Failed to Clone Repository**\n\n" +
+                        "The repository URL appears to be invalid or inaccessible.\n\n" +
+                        "**URL provided:** " + state.getRepoUrl() + "\n\n" +
+                        "**Error:** " + e.getMessage() + "\n\n" +
+                        "**Possible solutions:**\n" +
+                        "1. Check if the repository URL is correct\n" +
+                        "2. Verify you have access to the repository\n" +
+                        "3. Ensure the branch name is correct\n" +
+                        "4. Try using the clean git URL format (without /tree/)";
+            } else {
+                errorMessage = "❌ **Code Indexing Failed**\n\n" +
+                        "Error: " + e.getMessage() + "\n\n" +
+                        "Please check the logs for more details.";
+            }
+
             updates.put("indexingResult", errorResult);
-            updates.put("lastAgentDecision", AgentDecision.error("Failed to index code: " + e.getMessage()));
+            updates.put("lastAgentDecision", AgentDecision.error(errorMessage));
             return updates;
         }
     }

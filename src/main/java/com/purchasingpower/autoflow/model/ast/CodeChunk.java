@@ -125,7 +125,16 @@ public class CodeChunk {
         // Common fields
         flat.put("chunk_type", type.toString());
         flat.put("repo_name", repoName);
-        flat.put("content", content);
+
+        // CRITICAL: Pinecone metadata limit is 40KB per vector
+        // Store only a preview of content (first 500 chars) to avoid exceeding limit
+        // Full content is already embedded in the vector itself
+        if (content != null) {
+            String contentPreview = content.length() > 500
+                ? content.substring(0, 500) + "..."
+                : content;
+            flat.put("content_preview", contentPreview);
+        }
 
         if (parentChunkId != null) {
             flat.put("parent_chunk_id", parentChunkId);

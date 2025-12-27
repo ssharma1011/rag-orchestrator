@@ -1,15 +1,17 @@
 package com.purchasingpower.autoflow.workflow;
 
+import com.purchasingpower.autoflow.model.dto.WorkflowEvent;
+import com.purchasingpower.autoflow.service.WorkflowStreamService;
 import com.purchasingpower.autoflow.workflow.agents.*;
 import com.purchasingpower.autoflow.workflow.state.AgentDecision;
 import com.purchasingpower.autoflow.workflow.state.RequirementAnalysis;
 import com.purchasingpower.autoflow.workflow.state.WorkflowState;
 import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.GraphStateException;
 import org.bsc.langgraph4j.StateGraph;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -22,7 +24,6 @@ import static org.bsc.langgraph4j.action.AsyncEdgeAction.edge_async;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class AutoFlowWorkflow {
 
     private final RequirementAnalyzerAgent requirementAnalyzer;
@@ -39,8 +40,43 @@ public class AutoFlowWorkflow {
     private final PRCreatorAgent prCreator;
     private final DocumentationAgent documentationAgent;
 
+    /**
+     * SSE streaming service (optional - may be null if SSE not enabled).
+     */
+    @Autowired(required = false)
+    private WorkflowStreamService streamService;
 
     private CompiledGraph<WorkflowState> compiledGraph;
+
+    public AutoFlowWorkflow(
+            RequirementAnalyzerAgent requirementAnalyzer,
+            LogAnalyzerAgent logAnalyzer,
+            CodeIndexerAgent codeIndexer,
+            ScopeDiscoveryAgent scopeDiscovery,
+            ScopeApprovalAgent scopeApproval,
+            ContextBuilderAgent contextBuilder,
+            CodeGeneratorAgent codeGenerator,
+            BuildValidatorAgent buildValidator,
+            TestRunnerAgent testRunner,
+            PRReviewerAgent prReviewer,
+            ReadmeGeneratorAgent readmeGenerator,
+            PRCreatorAgent prCreator,
+            DocumentationAgent documentationAgent
+    ) {
+        this.requirementAnalyzer = requirementAnalyzer;
+        this.logAnalyzer = logAnalyzer;
+        this.codeIndexer = codeIndexer;
+        this.scopeDiscovery = scopeDiscovery;
+        this.scopeApproval = scopeApproval;
+        this.contextBuilder = contextBuilder;
+        this.codeGenerator = codeGenerator;
+        this.buildValidator = buildValidator;
+        this.testRunner = testRunner;
+        this.prReviewer = prReviewer;
+        this.readmeGenerator = readmeGenerator;
+        this.prCreator = prCreator;
+        this.documentationAgent = documentationAgent;
+    }
 
     @PostConstruct
     public void initialize() throws GraphStateException {
@@ -90,40 +126,50 @@ public class AutoFlowWorkflow {
                         log.info("   Data Sources: {}", analysis.getDataSources());
                         log.info("   Modifies Code: {}", analysis.isModifiesCode());
                         log.info("   Needs Approval: {}", analysis.isNeedsApproval());
+                    } else {
+                        log.warn("   ⚠️ No analysis available - checking for errors");
                     }
                     log.info("═══════════════════════════════════════════════════════");
 
-                    // CAPABILITY-BASED ROUTING (not task type strings)
-                    if (analysis != null) {
-                        // Casual chat - no data sources needed
-                        if (analysis.isCasualChat()) {
-                            log.info("💬 Casual chat → chat_responder");
-                            return "chat_responder";
-                        }
-
-                        // Read-only query needing code context
-                        if (analysis.isReadOnly() && analysis.needsCodeContext()) {
-                            log.info("📚 Read-only code query → code_indexer");
-                            return "code_indexer";
-                        }
-
-                        // Code modification - full workflow
-                        if (analysis.isModifiesCode() && analysis.needsCodeContext()) {
-                            log.info("🔧 Code modification → {}", s.hasLogs() ? "log_analyzer" : "code_indexer");
-                            return s.hasLogs() ? "log_analyzer" : "code_indexer";
-                        }
-
-                        // Future: Confluence-only queries
-                        if (analysis.needsConfluenceContext() && !analysis.needsCodeContext()) {
-                            log.info("📋 Confluence query → confluence_handler (TODO)");
-                            return "chat_responder"; // For now
-                        }
+                    // CRITICAL: Check for errors or missing analysis FIRST
+                    if (analysis == null) {
+                        log.error("❌ RequirementAnalyzer produced no analysis - stopping workflow");
+                        return "ask_developer";
                     }
 
                     if (shouldPause(s)) {
+                        log.warn("⚠️ RequirementAnalyzer encountered error or needs input - pausing workflow");
                         return "ask_developer";
                     }
-                    return s.hasLogs() ? "log_analyzer" : "code_indexer";
+
+                    // CAPABILITY-BASED ROUTING (not task type strings)
+                    // Casual chat - no data sources needed
+                    if (analysis.isCasualChat()) {
+                        log.info("💬 Casual chat → chat_responder");
+                        return "chat_responder";
+                    }
+
+                    // Read-only query needing code context
+                    if (analysis.isReadOnly() && analysis.needsCodeContext()) {
+                        log.info("📚 Read-only code query → code_indexer");
+                        return "code_indexer";
+                    }
+
+                    // Code modification - full workflow
+                    if (analysis.isModifiesCode() && analysis.needsCodeContext()) {
+                        log.info("🔧 Code modification → {}", s.hasLogs() ? "log_analyzer" : "code_indexer");
+                        return s.hasLogs() ? "log_analyzer" : "code_indexer";
+                    }
+
+                    // Future: Confluence-only queries
+                    if (analysis.needsConfluenceContext() && !analysis.needsCodeContext()) {
+                        log.info("📋 Confluence query → confluence_handler (TODO)");
+                        return "chat_responder"; // For now
+                    }
+
+                    // If we reach here, default to code indexer
+                    log.info("📚 Default routing → code_indexer");
+                    return "code_indexer";
                 }),
                 Map.of(
                         "chat_responder", "chat_responder",
@@ -145,14 +191,16 @@ public class AutoFlowWorkflow {
                     }
                     log.info("═══════════════════════════════════════════════════════");
 
+                    // CRITICAL: Check for errors FIRST before routing by task type
+                    if (shouldPause(s)) {
+                        log.warn("⚠️ CodeIndexer failed or needs user input - pausing workflow");
+                        return "ask_developer";
+                    }
+
                     // If read-only query, route to documentation agent
                     if (analysis != null && analysis.isReadOnly()) {
                         log.info("📚 Read-only query → documentation_agent");
                         return "documentation_agent";
-                    }
-
-                    if (shouldPause(s)) {
-                        return "ask_developer";
                     }
 
                     // CRITICAL FIX: If scope proposal exists and user just responded, validate approval
@@ -210,7 +258,16 @@ public class AutoFlowWorkflow {
     }
 
     public WorkflowState execute(WorkflowState initialState) {
-        log.info("🚀 Starting workflow: {}", initialState.getConversationId());
+        String conversationId = initialState.getConversationId();
+        log.info("🚀 Starting workflow: {}", conversationId);
+
+        // Send SSE: Workflow started
+        sendSSE(conversationId, WorkflowEvent.running(
+                conversationId,
+                "workflow",
+                "🚀 Workflow started",
+                0.0
+        ));
 
         Map<String, Object> initialData = new java.util.HashMap<>(initialState.toMap());
         initialData.put("workflowStatus", "RUNNING");
@@ -218,11 +275,58 @@ public class AutoFlowWorkflow {
         initialData.put("reviewAttempt", 0);
 
         try {
-            Optional<WorkflowState> result = compiledGraph.invoke(initialData);
-            return result.orElse(initialState);
+            // Use stream() instead of invoke() to get intermediate updates
+            // ✅ Fixed: AsyncGenerator doesn't support .peek(), use manual iteration
+            java.util.concurrent.atomic.AtomicReference<WorkflowState> finalStateRef =
+                    new java.util.concurrent.atomic.AtomicReference<>(initialState);
+
+            compiledGraph.stream(initialData)
+                    .forEach(nodeOutput -> {
+                        // Send SSE update for each agent execution
+                        String nodeName = nodeOutput.node();
+                        // nodeOutput.state() returns Map<String, Object>, need to convert to WorkflowState
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> stateMap = (Map<String, Object>) nodeOutput.state();
+                        WorkflowState currentState = WorkflowState.fromMap(stateMap);
+
+                        // Calculate progress (rough estimate based on node)
+                        double progress = calculateProgress(nodeName);
+
+                        // Get agent-specific message
+                        String message = getAgentMessage(nodeName, currentState);
+
+                        sendSSE(conversationId, WorkflowEvent.running(
+                                conversationId,
+                                nodeName,
+                                message,
+                                progress
+                        ));
+
+                        // Track final state
+                        finalStateRef.set(currentState);
+                    });
+
+            WorkflowState finalState = finalStateRef.get();
+
+            // Send SSE: Workflow completed
+            String completionMessage = finalState.getLastAgentDecision() != null ?
+                    finalState.getLastAgentDecision().getMessage() :
+                    "✅ Workflow completed successfully";
+
+            if (streamService != null) {
+                streamService.complete(conversationId, completionMessage);
+            }
+
+            return finalState;
 
         } catch (Exception e) {
             log.error("Workflow execution failed", e);
+
+            // Send SSE: Workflow failed
+            if (streamService != null) {
+                streamService.fail(conversationId, e.getMessage());
+            }
+
             Map<String, Object> errorData = new java.util.HashMap<>(initialData);
             errorData.put("workflowStatus", "FAILED");
             errorData.put("lastAgentDecision", AgentDecision.error(e.getMessage()));
@@ -230,9 +334,68 @@ public class AutoFlowWorkflow {
         }
     }
 
+    /**
+     * Send SSE update (if streaming is enabled).
+     */
+    private void sendSSE(String conversationId, WorkflowEvent event) {
+        if (streamService != null) {
+            streamService.sendUpdate(conversationId, event);
+        }
+    }
+
+    /**
+     * Calculate workflow progress based on which node is executing.
+     * This is a rough estimate to give users visibility into progress.
+     */
+    private double calculateProgress(String nodeName) {
+        return switch (nodeName) {
+            case "__start__" -> 0.0;
+            case "requirement_analyzer" -> 0.1;
+            case "log_analyzer" -> 0.2;
+            case "code_indexer" -> 0.3;
+            case "documentation_agent" -> 0.5;
+            case "scope_discovery" -> 0.4;
+            case "scope_approval" -> 0.5;
+            case "context_builder" -> 0.6;
+            case "code_generator" -> 0.7;
+            case "build_validator" -> 0.8;
+            case "test_runner" -> 0.85;
+            case "pr_reviewer" -> 0.9;
+            case "pr_creator" -> 0.95;
+            case "ask_developer" -> 0.99;
+            default -> 0.5;
+        };
+    }
+
+    /**
+     * Get user-friendly message for the current agent execution.
+     */
+    private String getAgentMessage(String nodeName, WorkflowState state) {
+        return switch (nodeName) {
+            case "__start__" -> "🚀 Starting workflow...";
+            case "requirement_analyzer" -> "📋 Analyzing your request...";
+            case "log_analyzer" -> "📊 Analyzing error logs...";
+            case "code_indexer" -> "📦 Indexing codebase (cloning, building, embedding)...";
+            case "documentation_agent" -> "📚 Generating documentation...";
+            case "scope_discovery" -> "🔍 Discovering code scope...";
+            case "scope_approval" -> "✅ Reviewing scope proposal...";
+            case "context_builder" -> "🧩 Building context for code generation...";
+            case "code_generator" -> "⚙️ Generating code changes...";
+            case "build_validator" -> "🔨 Validating build...";
+            case "test_runner" -> "🧪 Running tests...";
+            case "pr_reviewer" -> "👀 Reviewing PR...";
+            case "pr_creator" -> "📝 Creating pull request...";
+            case "ask_developer" -> state.getLastAgentDecision() != null ?
+                    state.getLastAgentDecision().getMessage() :
+                    "⏸️ Waiting for user input...";
+            default -> "⚙️ Processing...";
+        };
+    }
+
     private boolean shouldPause(WorkflowState state) {
         return state.getLastAgentDecision() != null &&
-                state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.ASK_DEV;
+                (state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.ASK_DEV ||
+                 state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.ERROR);
     }
 
     /**

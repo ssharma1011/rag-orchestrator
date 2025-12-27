@@ -166,6 +166,32 @@ public class CodeIndexerAgent {
             log.info("   Chunks deleted: {}", syncResult.getChunksDeleted());
             log.info("   Duration: {}ms", syncResult.getTotalTimeMs());
 
+            // CRITICAL: Fail fast if Pinecone sync failed
+            if (syncResult.getSyncType() == EmbeddingSyncResult.SyncType.ERROR) {
+                log.error("❌ Pinecone sync failed - stopping indexing");
+
+                IndexingResult errorResult = IndexingResult.builder()
+                        .success(false)
+                        .errors(syncResult.getErrors() != null ? syncResult.getErrors() : List.of("Pinecone sync failed"))
+                        .indexType(IndexingResult.IndexType.FULL)
+                        .build();
+
+                String errorMessage = "❌ **Pinecone Embedding Sync Failed**\n\n";
+                if (syncResult.getErrors() != null && !syncResult.getErrors().isEmpty()) {
+                    errorMessage += "**Errors:**\n";
+                    for (String error : syncResult.getErrors()) {
+                        errorMessage += "- " + error + "\n";
+                    }
+                } else {
+                    errorMessage += "Check the logs for details.\n";
+                }
+                errorMessage += "\n**Note:** Neo4j and Oracle sync will be skipped to avoid inconsistent state.";
+
+                updates.put("indexingResult", errorResult);
+                updates.put("lastAgentDecision", AgentDecision.error(errorMessage));
+                return updates;
+            }
+
             // ================================================================
             // STEP 4: NEO4J GRAPH UPDATE
             // ================================================================

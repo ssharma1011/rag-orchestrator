@@ -32,6 +32,7 @@ public class DocumentationAgent {
     private final GeminiClient geminiClient;
     private final PromptLibraryService promptLibrary;
     private final GitOperationsService gitService;
+    private final com.purchasingpower.autoflow.repository.GraphNodeRepository graphNodeRepository;
 
     public Map<String, Object> execute(WorkflowState state) {
         log.info("📚 Generating documentation for: {}", state.getRequirement());
@@ -56,7 +57,45 @@ public class DocumentationAgent {
             List<PineconeRetriever.CodeContext> relevantCode =
                     pineconeRetriever.findRelevantCodeStructured(queryEmbedding, repoName);
 
-            log.info("Found {} relevant code chunks", relevantCode.size());
+            log.info("Found {} relevant code chunks from Pinecone", relevantCode.size());
+
+            // FALLBACK: If Pinecone returns 0 results, use Oracle CODE_NODES table
+            if (relevantCode.isEmpty()) {
+                log.warn("⚠️ Pinecone returned 0 results - falling back to Oracle CODE_NODES table");
+
+                List<com.purchasingpower.autoflow.model.graph.GraphNode> graphNodes =
+                        graphNodeRepository.findByRepoName(repoName);
+
+                log.info("Found {} code nodes in Oracle for repo: {}", graphNodes.size(), repoName);
+
+                if (!graphNodes.isEmpty()) {
+                    // Convert GraphNodes to CodeContext format
+                    // Take a representative sample to avoid overwhelming the LLM
+                    relevantCode = graphNodes.stream()
+                            .limit(20)  // Take top 20 nodes
+                            .map(node -> {
+                                String className = node.getName();
+                                String filePath = node.getFilePath() != null ? node.getFilePath() : "unknown";
+                                String methodName = node.getType() == com.purchasingpower.autoflow.model.ast.ChunkType.METHOD ? node.getName() : "";
+                                String content = node.getContent() != null ? node.getContent() : "";
+
+                                // Create a representative score based on node type
+                                double score = switch (node.getType()) {
+                                    case CLASS -> 0.95;
+                                    case METHOD -> 0.90;
+                                    case FIELD -> 0.85;
+                                    default -> 0.80;
+                                };
+
+                                return new PineconeRetriever.CodeContext(
+                                        className, filePath, methodName, content, score
+                                );
+                            })
+                            .toList();
+
+                    log.info("✅ Converted {} graph nodes to code context", relevantCode.size());
+                }
+            }
 
             // ================================================================
             // STEP 2: GENERATE EXPLANATION USING LLM

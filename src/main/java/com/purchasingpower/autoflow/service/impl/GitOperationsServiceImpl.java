@@ -2,6 +2,9 @@ package com.purchasingpower.autoflow.service.impl;
 
 import com.purchasingpower.autoflow.configuration.AppProperties;
 import com.purchasingpower.autoflow.service.GitOperationsService;
+import com.purchasingpower.autoflow.service.git.GitProvider;
+import com.purchasingpower.autoflow.service.git.GitUrlParser;
+import com.purchasingpower.autoflow.service.git.GitUrlParserFactory;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.jgit.api.Git;
@@ -228,67 +231,62 @@ public class GitOperationsServiceImpl implements GitOperationsService {
 
     @Override
     public String extractRepoName(String repoUrl) {
-        // Remove branch part if present (e.g., /tree/branch-name)
-        String cleanUrl = extractCleanRepoUrl(repoUrl);
+        // ENTERPRISE: Use provider-specific parser
+        GitUrlParser parser = GitUrlParserFactory.getParser(repoUrl);
+        GitProvider provider = parser.getProvider();
 
-        String name = cleanUrl;
-        if (name.endsWith(".git")) {
-            name = name.substring(0, name.length() - 4);
-        }
+        log.debug("Extracting repo name from {} URL: {}", provider.getDisplayName(), repoUrl);
 
-        // Get last part after /
-        int lastSlash = name.lastIndexOf('/');
-        if (lastSlash >= 0) {
-            name = name.substring(lastSlash + 1);
-        }
-
-        return name;
+        return parser.extractRepoName(repoUrl);
     }
 
     /**
-     * Extract branch name from GitHub URL.
+     * Extract branch name from Git URL (provider-agnostic).
+     * ENTERPRISE: Supports GitHub, GitLab, Bitbucket, Azure DevOps, etc.
+     *
      * Examples:
-     *   https://github.com/user/repo/tree/feature-branch → feature-branch
-     *   https://github.com/user/repo → null (use default)
-     *   https://github.com/user/repo.git → null
+     *   GitHub:       https://github.com/user/repo/tree/feature-branch → feature-branch
+     *   GitLab:       https://gitlab.com/user/repo/-/tree/feature-branch → feature-branch
+     *   Bitbucket:    https://bitbucket.org/user/repo/src/feature-branch → feature-branch
+     *   Azure DevOps: https://dev.azure.com/org/proj/_git/repo?version=GBfeature-branch → feature-branch
+     *   Generic Git:  https://custom-git.company.com/repo.git → null (use default)
      */
+    @Override
     public String extractBranchFromUrl(String repoUrl) {
         if (repoUrl == null || repoUrl.trim().isEmpty()) {
             return null;
         }
 
-        // Pattern: /tree/branch-name or /blob/branch-name
-        if (repoUrl.contains("/tree/")) {
-            int treeIndex = repoUrl.indexOf("/tree/");
-            String afterTree = repoUrl.substring(treeIndex + 6); // "/tree/".length() = 6
-            // Remove any trailing path (e.g., /tree/branch/some/file.java)
-            int nextSlash = afterTree.indexOf('/');
-            return nextSlash > 0 ? afterTree.substring(0, nextSlash) : afterTree;
+        // ENTERPRISE: Use provider-specific parser
+        GitUrlParser parser = GitUrlParserFactory.getParser(repoUrl);
+        GitProvider provider = parser.getProvider();
+
+        String branch = parser.extractBranch(repoUrl);
+
+        if (branch != null) {
+            log.debug("Extracted branch '{}' from {} URL", branch, provider.getDisplayName());
+        } else {
+            log.debug("No branch found in {} URL (will use default)", provider.getDisplayName());
         }
 
-        if (repoUrl.contains("/blob/")) {
-            int blobIndex = repoUrl.indexOf("/blob/");
-            String afterBlob = repoUrl.substring(blobIndex + 6);
-            int nextSlash = afterBlob.indexOf('/');
-            return nextSlash > 0 ? afterBlob.substring(0, nextSlash) : afterBlob;
-        }
-
-        return null; // No branch in URL
+        return branch;
     }
 
     @Override
     public String getCleanRepoUrl(String repoUrl) {
         if (repoUrl == null) return null;
 
-        // Remove /tree/... or /blob/...
-        if (repoUrl.contains("/tree/")) {
-            return repoUrl.substring(0, repoUrl.indexOf("/tree/"));
-        }
-        if (repoUrl.contains("/blob/")) {
-            return repoUrl.substring(0, repoUrl.indexOf("/blob/"));
+        // ENTERPRISE: Use provider-specific parser to clean URL
+        GitUrlParser parser = GitUrlParserFactory.getParser(repoUrl);
+        GitProvider provider = parser.getProvider();
+
+        String cleanUrl = parser.extractCleanRepoUrl(repoUrl);
+
+        if (!cleanUrl.equals(repoUrl)) {
+            log.debug("Cleaned {} URL: {} → {}", provider.getDisplayName(), repoUrl, cleanUrl);
         }
 
-        return repoUrl;
+        return cleanUrl;
     }
 
     /**

@@ -126,40 +126,50 @@ public class AutoFlowWorkflow {
                         log.info("   Data Sources: {}", analysis.getDataSources());
                         log.info("   Modifies Code: {}", analysis.isModifiesCode());
                         log.info("   Needs Approval: {}", analysis.isNeedsApproval());
+                    } else {
+                        log.warn("   ⚠️ No analysis available - checking for errors");
                     }
                     log.info("═══════════════════════════════════════════════════════");
 
-                    // CAPABILITY-BASED ROUTING (not task type strings)
-                    if (analysis != null) {
-                        // Casual chat - no data sources needed
-                        if (analysis.isCasualChat()) {
-                            log.info("💬 Casual chat → chat_responder");
-                            return "chat_responder";
-                        }
-
-                        // Read-only query needing code context
-                        if (analysis.isReadOnly() && analysis.needsCodeContext()) {
-                            log.info("📚 Read-only code query → code_indexer");
-                            return "code_indexer";
-                        }
-
-                        // Code modification - full workflow
-                        if (analysis.isModifiesCode() && analysis.needsCodeContext()) {
-                            log.info("🔧 Code modification → {}", s.hasLogs() ? "log_analyzer" : "code_indexer");
-                            return s.hasLogs() ? "log_analyzer" : "code_indexer";
-                        }
-
-                        // Future: Confluence-only queries
-                        if (analysis.needsConfluenceContext() && !analysis.needsCodeContext()) {
-                            log.info("📋 Confluence query → confluence_handler (TODO)");
-                            return "chat_responder"; // For now
-                        }
+                    // CRITICAL: Check for errors or missing analysis FIRST
+                    if (analysis == null) {
+                        log.error("❌ RequirementAnalyzer produced no analysis - stopping workflow");
+                        return "ask_developer";
                     }
 
                     if (shouldPause(s)) {
+                        log.warn("⚠️ RequirementAnalyzer encountered error or needs input - pausing workflow");
                         return "ask_developer";
                     }
-                    return s.hasLogs() ? "log_analyzer" : "code_indexer";
+
+                    // CAPABILITY-BASED ROUTING (not task type strings)
+                    // Casual chat - no data sources needed
+                    if (analysis.isCasualChat()) {
+                        log.info("💬 Casual chat → chat_responder");
+                        return "chat_responder";
+                    }
+
+                    // Read-only query needing code context
+                    if (analysis.isReadOnly() && analysis.needsCodeContext()) {
+                        log.info("📚 Read-only code query → code_indexer");
+                        return "code_indexer";
+                    }
+
+                    // Code modification - full workflow
+                    if (analysis.isModifiesCode() && analysis.needsCodeContext()) {
+                        log.info("🔧 Code modification → {}", s.hasLogs() ? "log_analyzer" : "code_indexer");
+                        return s.hasLogs() ? "log_analyzer" : "code_indexer";
+                    }
+
+                    // Future: Confluence-only queries
+                    if (analysis.needsConfluenceContext() && !analysis.needsCodeContext()) {
+                        log.info("📋 Confluence query → confluence_handler (TODO)");
+                        return "chat_responder"; // For now
+                    }
+
+                    // If we reach here, default to code indexer
+                    log.info("📚 Default routing → code_indexer");
+                    return "code_indexer";
                 }),
                 Map.of(
                         "chat_responder", "chat_responder",
@@ -305,7 +315,8 @@ public class AutoFlowWorkflow {
 
     private boolean shouldPause(WorkflowState state) {
         return state.getLastAgentDecision() != null &&
-                state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.ASK_DEV;
+                (state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.ASK_DEV ||
+                 state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.ERROR);
     }
 
     /**

@@ -2,7 +2,39 @@
 
 ## ✅ What Was Implemented
 
-### 1. Server-Sent Events (SSE) Streaming
+### 1. CRITICAL BUG FIX: Workflow Error Handling
+
+**Problem:** Workflow continued processing after RequirementAnalyzer failed, wastefully cloning repos, running builds, etc. without knowing what the user wanted.
+
+**Root Cause:**
+- `shouldPause()` only checked for `NextStep.ASK_DEV`, not `NextStep.ERROR`
+- RequirementAnalyzer routing had fallback that continued even when analysis was null or failed
+- When Gemini API returned 429 (rate limit), workflow set ERROR but continued processing
+
+**Fix Applied:**
+```java
+// Before: Only stopped on ASK_DEV
+private boolean shouldPause(WorkflowState state) {
+    return state.getLastAgentDecision() != null &&
+            state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.ASK_DEV;
+}
+
+// After: Stops on both ASK_DEV and ERROR
+private boolean shouldPause(WorkflowState state) {
+    return state.getLastAgentDecision() != null &&
+            (state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.ASK_DEV ||
+             state.getLastAgentDecision().getNextStep() == AgentDecision.NextStep.ERROR);
+}
+```
+
+**RequirementAnalyzer Routing Fix:**
+- Added error check FIRST before capability-based routing
+- Removed fallback that allowed continuation without analysis
+- Now immediately routes to `ask_developer` if analysis is null or error occurred
+
+**Impact:** Prevents wasteful resource usage when LLM calls fail. Workflow now properly stops and shows error message to user instead of hallucinating responses.
+
+### 2. Server-Sent Events (SSE) Streaming
 
 Replaces frontend polling with real-time push notifications.
 
@@ -33,7 +65,7 @@ eventSource.onmessage = (event) => {
 curl http://localhost:8080/api/v1/workflows/stream/health
 ```
 
-### 2. Database Observability - Already Implemented!
+### 3. Database Observability - Already Implemented!
 
 **The following were ALREADY working before this session:**
 
@@ -53,7 +85,7 @@ curl http://localhost:8080/api/v1/workflows/stream/health
 - Agents don't call `agentMetricsService.recordExecution()` yet
 - This is why AGENT_EXECUTIONS table is empty
 
-### 3. How to Integrate Agent Metrics (Template)
+### 4. How to Integrate Agent Metrics (Template)
 
 To populate the AGENT_EXECUTIONS table, each agent needs to record its execution:
 
@@ -215,10 +247,13 @@ FETCH FIRST 10 ROWS ONLY;
 ## ✨ Summary
 
 **What This Session Accomplished:**
-1. ✅ Implemented SSE streaming for real-time updates (no more polling!)
-2. ✅ Verified LLM metrics tracking is already working
-3. ✅ Created documentation/template for agent metrics integration
-4. ✅ Integrated SSE into AutoFlowWorkflow
+1. ✅ **CRITICAL:** Fixed workflow error handling to stop wasteful processing when RequirementAnalyzer fails
+2. ✅ Implemented SSE streaming for real-time updates (no more polling!)
+3. ✅ Fixed Git URL parsing for GitHub/GitLab/Bitbucket web URLs
+4. ✅ Fixed CodeIndexer error routing to check errors FIRST
+5. ✅ Verified LLM metrics tracking is already working
+6. ✅ Created documentation/template for agent metrics integration
+7. ✅ Integrated SSE into AutoFlowWorkflow
 
 **What Was Already Working:**
 1. ✅ Database schema (all tables exist)

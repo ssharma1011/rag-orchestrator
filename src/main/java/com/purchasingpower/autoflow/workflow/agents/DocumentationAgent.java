@@ -74,21 +74,28 @@ public class DocumentationAgent {
                     relevantCode = graphNodes.stream()
                             .limit(20)  // Take top 20 nodes
                             .map(node -> {
-                                String className = node.getName();
+                                String className = node.getSimpleName();  // ✅ Fixed: getSimpleName() not getName()
                                 String filePath = node.getFilePath() != null ? node.getFilePath() : "unknown";
-                                String methodName = node.getType() == com.purchasingpower.autoflow.model.ast.ChunkType.METHOD ? node.getName() : "";
-                                String content = node.getContent() != null ? node.getContent() : "";
+                                String methodName = node.getType() == com.purchasingpower.autoflow.model.ast.ChunkType.METHOD ? node.getSimpleName() : "";
+                                String content = node.getSummary() != null ? node.getSummary() : "";  // ✅ Fixed: getSummary() not getContent()
 
                                 // Create a representative score based on node type
-                                double score = switch (node.getType()) {
-                                    case CLASS -> 0.95;
-                                    case METHOD -> 0.90;
-                                    case FIELD -> 0.85;
-                                    default -> 0.80;
+                                float score = switch (node.getType()) {
+                                    case CLASS -> 0.95f;
+                                    case METHOD -> 0.90f;
+                                    case FIELD -> 0.85f;
+                                    default -> 0.80f;
                                 };
 
+                                // ✅ Fixed: Correct CodeContext constructor (id, score, chunkType, className, methodName, filePath, content)
                                 return new PineconeRetriever.CodeContext(
-                                        className, filePath, methodName, content, score
+                                        node.getNodeId(),
+                                        score,
+                                        node.getType().toString(),
+                                        className,
+                                        methodName,
+                                        filePath,
+                                        content
                                 );
                             })
                             .toList();

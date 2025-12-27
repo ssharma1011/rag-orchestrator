@@ -167,17 +167,19 @@ public class CodeIndexerAgent {
             log.info("   Duration: {}ms", syncResult.getTotalTimeMs());
 
             // CRITICAL: Handle Pinecone sync failures intelligently
-            if (syncResult.getSyncType() == EmbeddingSyncResult.SyncType.ERROR) {
-                RequirementAnalysis analysis = state.getRequirementAnalysis();
+            // ✅ Fixed: SyncType is a separate class, not nested in EmbeddingSyncResult
+            if (syncResult.getSyncType() == SyncType.ERROR) {
+                // Reuse the analysis variable from line 110 (already defined)
 
                 // For CODE CHANGES: Fail fast (need semantic search for quality)
                 if (analysis != null && analysis.isModifiesCode()) {
                     log.error("❌ Pinecone sync failed for code modification - CANNOT PROCEED");
                     log.error("   Reason: Need semantic search for quality code generation");
 
+                    // ✅ Fixed: EmbeddingSyncResult has no getErrors() method
                     IndexingResult errorResult = IndexingResult.builder()
                             .success(false)
-                            .errors(syncResult.getErrors() != null ? syncResult.getErrors() : List.of("Pinecone sync failed"))
+                            .errors(List.of("Pinecone sync failed - check logs for details"))
                             .indexType(IndexingResult.IndexType.FULL)
                             .build();
 
@@ -189,15 +191,9 @@ public class CodeIndexerAgent {
                             "- Risk of creating broken PRs that waste developer time\n\n" +
                             "**What to do:**\n" +
                             "1. Check Pinecone service status\n" +
-                            "2. Review error logs below\n" +
-                            "3. Try again once Pinecone is healthy\n\n";
-
-                    if (syncResult.getErrors() != null && !syncResult.getErrors().isEmpty()) {
-                        errorMessage += "**Errors:**\n";
-                        for (String error : syncResult.getErrors()) {
-                            errorMessage += "- " + error + "\n";
-                        }
-                    }
+                            "2. Review application logs for error details\n" +
+                            "3. Try again once Pinecone is healthy\n\n" +
+                            "Check the logs for more information about the failure.";
 
                     updates.put("indexingResult", errorResult);
                     updates.put("lastAgentDecision", AgentDecision.error(errorMessage));

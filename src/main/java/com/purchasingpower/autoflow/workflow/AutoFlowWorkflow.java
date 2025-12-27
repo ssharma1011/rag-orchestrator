@@ -276,8 +276,12 @@ public class AutoFlowWorkflow {
 
         try {
             // Use stream() instead of invoke() to get intermediate updates
-            WorkflowState finalState = compiledGraph.stream(initialData)
-                    .peek(nodeOutput -> {
+            // ✅ Fixed: AsyncGenerator doesn't support .peek(), use manual iteration
+            java.util.concurrent.atomic.AtomicReference<WorkflowState> finalStateRef =
+                    new java.util.concurrent.atomic.AtomicReference<>(initialState);
+
+            compiledGraph.stream(initialData)
+                    .forEach(nodeOutput -> {
                         // Send SSE update for each agent execution
                         String nodeName = nodeOutput.node();
                         WorkflowState currentState = new WorkflowState(nodeOutput.state());
@@ -294,10 +298,12 @@ public class AutoFlowWorkflow {
                                 message,
                                 progress
                         ));
-                    })
-                    .reduce((a, b) -> b)  // Get last state
-                    .map(nodeOutput -> new WorkflowState(nodeOutput.state()))
-                    .orElse(initialState);
+
+                        // Track final state
+                        finalStateRef.set(currentState);
+                    });
+
+            WorkflowState finalState = finalStateRef.get();
 
             // Send SSE: Workflow completed
             String completionMessage = finalState.getLastAgentDecision() != null ?

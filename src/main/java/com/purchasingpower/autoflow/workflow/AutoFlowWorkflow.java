@@ -275,8 +275,29 @@ public class AutoFlowWorkflow {
         initialData.put("reviewAttempt", 0);
 
         try {
-            Optional<WorkflowState> result = compiledGraph.invoke(initialData);
-            WorkflowState finalState = result.orElse(initialState);
+            // Use stream() instead of invoke() to get intermediate updates
+            WorkflowState finalState = compiledGraph.stream(initialData)
+                    .peek(nodeOutput -> {
+                        // Send SSE update for each agent execution
+                        String nodeName = nodeOutput.node();
+                        WorkflowState currentState = new WorkflowState(nodeOutput.state());
+
+                        // Calculate progress (rough estimate based on node)
+                        double progress = calculateProgress(nodeName);
+
+                        // Get agent-specific message
+                        String message = getAgentMessage(nodeName, currentState);
+
+                        sendSSE(conversationId, WorkflowEvent.running(
+                                conversationId,
+                                nodeName,
+                                message,
+                                progress
+                        ));
+                    })
+                    .reduce((a, b) -> b)  // Get last state
+                    .map(nodeOutput -> new WorkflowState(nodeOutput.state()))
+                    .orElse(initialState);
 
             // Send SSE: Workflow completed
             String completionMessage = finalState.getLastAgentDecision() != null ?
@@ -311,6 +332,55 @@ public class AutoFlowWorkflow {
         if (streamService != null) {
             streamService.sendUpdate(conversationId, event);
         }
+    }
+
+    /**
+     * Calculate workflow progress based on which node is executing.
+     * This is a rough estimate to give users visibility into progress.
+     */
+    private double calculateProgress(String nodeName) {
+        return switch (nodeName) {
+            case "__start__" -> 0.0;
+            case "requirement_analyzer" -> 0.1;
+            case "log_analyzer" -> 0.2;
+            case "code_indexer" -> 0.3;
+            case "documentation_agent" -> 0.5;
+            case "scope_discovery" -> 0.4;
+            case "scope_approval" -> 0.5;
+            case "context_builder" -> 0.6;
+            case "code_generator" -> 0.7;
+            case "build_validator" -> 0.8;
+            case "test_runner" -> 0.85;
+            case "pr_reviewer" -> 0.9;
+            case "pr_creator" -> 0.95;
+            case "ask_developer" -> 0.99;
+            default -> 0.5;
+        };
+    }
+
+    /**
+     * Get user-friendly message for the current agent execution.
+     */
+    private String getAgentMessage(String nodeName, WorkflowState state) {
+        return switch (nodeName) {
+            case "__start__" -> "🚀 Starting workflow...";
+            case "requirement_analyzer" -> "📋 Analyzing your request...";
+            case "log_analyzer" -> "📊 Analyzing error logs...";
+            case "code_indexer" -> "📦 Indexing codebase (cloning, building, embedding)...";
+            case "documentation_agent" -> "📚 Generating documentation...";
+            case "scope_discovery" -> "🔍 Discovering code scope...";
+            case "scope_approval" -> "✅ Reviewing scope proposal...";
+            case "context_builder" -> "🧩 Building context for code generation...";
+            case "code_generator" -> "⚙️ Generating code changes...";
+            case "build_validator" -> "🔨 Validating build...";
+            case "test_runner" -> "🧪 Running tests...";
+            case "pr_reviewer" -> "👀 Reviewing PR...";
+            case "pr_creator" -> "📝 Creating pull request...";
+            case "ask_developer" -> state.getLastAgentDecision() != null ?
+                    state.getLastAgentDecision().getMessage() :
+                    "⏸️ Waiting for user input...";
+            default -> "⚙️ Processing...";
+        };
     }
 
     private boolean shouldPause(WorkflowState state) {

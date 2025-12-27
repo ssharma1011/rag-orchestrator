@@ -166,30 +166,48 @@ public class CodeIndexerAgent {
             log.info("   Chunks deleted: {}", syncResult.getChunksDeleted());
             log.info("   Duration: {}ms", syncResult.getTotalTimeMs());
 
-            // CRITICAL: Fail fast if Pinecone sync failed
+            // CRITICAL: Handle Pinecone sync failures intelligently
             if (syncResult.getSyncType() == EmbeddingSyncResult.SyncType.ERROR) {
-                log.error("❌ Pinecone sync failed - stopping indexing");
+                RequirementAnalysis analysis = state.getRequirementAnalysis();
 
-                IndexingResult errorResult = IndexingResult.builder()
-                        .success(false)
-                        .errors(syncResult.getErrors() != null ? syncResult.getErrors() : List.of("Pinecone sync failed"))
-                        .indexType(IndexingResult.IndexType.FULL)
-                        .build();
+                // For CODE CHANGES: Fail fast (need semantic search for quality)
+                if (analysis != null && analysis.isModifiesCode()) {
+                    log.error("❌ Pinecone sync failed for code modification - CANNOT PROCEED");
+                    log.error("   Reason: Need semantic search for quality code generation");
 
-                String errorMessage = "❌ **Pinecone Embedding Sync Failed**\n\n";
-                if (syncResult.getErrors() != null && !syncResult.getErrors().isEmpty()) {
-                    errorMessage += "**Errors:**\n";
-                    for (String error : syncResult.getErrors()) {
-                        errorMessage += "- " + error + "\n";
+                    IndexingResult errorResult = IndexingResult.builder()
+                            .success(false)
+                            .errors(syncResult.getErrors() != null ? syncResult.getErrors() : List.of("Pinecone sync failed"))
+                            .indexType(IndexingResult.IndexType.FULL)
+                            .build();
+
+                    String errorMessage = "❌ **Cannot Proceed with Code Changes**\n\n" +
+                            "Pinecone embedding sync failed, which means we cannot perform semantic code search.\n\n" +
+                            "**Why this matters for code changes:**\n" +
+                            "- Without semantic search, we might miss important patterns\n" +
+                            "- Code quality would be significantly degraded\n" +
+                            "- Risk of creating broken PRs that waste developer time\n\n" +
+                            "**What to do:**\n" +
+                            "1. Check Pinecone service status\n" +
+                            "2. Review error logs below\n" +
+                            "3. Try again once Pinecone is healthy\n\n";
+
+                    if (syncResult.getErrors() != null && !syncResult.getErrors().isEmpty()) {
+                        errorMessage += "**Errors:**\n";
+                        for (String error : syncResult.getErrors()) {
+                            errorMessage += "- " + error + "\n";
+                        }
                     }
-                } else {
-                    errorMessage += "Check the logs for details.\n";
-                }
-                errorMessage += "\n**Note:** Neo4j and Oracle sync will be skipped to avoid inconsistent state.";
 
-                updates.put("indexingResult", errorResult);
-                updates.put("lastAgentDecision", AgentDecision.error(errorMessage));
-                return updates;
+                    updates.put("indexingResult", errorResult);
+                    updates.put("lastAgentDecision", AgentDecision.error(errorMessage));
+                    return updates;
+                }
+
+                // For READ-ONLY (Documentation): Degrade gracefully
+                log.warn("⚠️ Pinecone sync failed but continuing for read-only query");
+                log.warn("   Fallback: Will use Neo4j graph + Oracle entities instead");
+                // Continue to Neo4j/Oracle sync - DocumentationAgent will handle fallback
             }
 
             // ================================================================

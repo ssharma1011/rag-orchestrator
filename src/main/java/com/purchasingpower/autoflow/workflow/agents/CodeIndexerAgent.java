@@ -343,8 +343,26 @@ public class CodeIndexerAgent {
                     .indexType(IndexingResult.IndexType.FULL)
                     .build();
 
+            // Create user-friendly error message
+            String errorMessage;
+            if (e.getMessage() != null && e.getMessage().contains("Invalid remote")) {
+                errorMessage = "❌ **Failed to Clone Repository**\n\n" +
+                        "The repository URL appears to be invalid or inaccessible.\n\n" +
+                        "**URL provided:** " + state.getRepoUrl() + "\n\n" +
+                        "**Error:** " + e.getMessage() + "\n\n" +
+                        "**Possible solutions:**\n" +
+                        "1. Check if the repository URL is correct\n" +
+                        "2. Verify you have access to the repository\n" +
+                        "3. Ensure the branch name is correct\n" +
+                        "4. Try using the clean git URL format (without /tree/)";
+            } else {
+                errorMessage = "❌ **Code Indexing Failed**\n\n" +
+                        "Error: " + e.getMessage() + "\n\n" +
+                        "Please check the logs for more details.";
+            }
+
             updates.put("indexingResult", errorResult);
-            updates.put("lastAgentDecision", AgentDecision.error("Failed to index code: " + e.getMessage()));
+            updates.put("lastAgentDecision", AgentDecision.error(errorMessage));
             return updates;
         }
     }

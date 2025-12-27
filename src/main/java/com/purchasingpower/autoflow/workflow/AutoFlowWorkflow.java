@@ -181,14 +181,16 @@ public class AutoFlowWorkflow {
                     }
                     log.info("═══════════════════════════════════════════════════════");
 
+                    // CRITICAL: Check for errors FIRST before routing by task type
+                    if (shouldPause(s)) {
+                        log.warn("⚠️ CodeIndexer failed or needs user input - pausing workflow");
+                        return "ask_developer";
+                    }
+
                     // If read-only query, route to documentation agent
                     if (analysis != null && analysis.isReadOnly()) {
                         log.info("📚 Read-only query → documentation_agent");
                         return "documentation_agent";
-                    }
-
-                    if (shouldPause(s)) {
-                        return "ask_developer";
                     }
 
                     // CRITICAL FIX: If scope proposal exists and user just responded, validate approval

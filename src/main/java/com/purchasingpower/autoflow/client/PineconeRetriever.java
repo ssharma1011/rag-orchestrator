@@ -159,7 +159,11 @@ public class PineconeRetriever {
                 if (fields.containsKey("file_path")) {
                     filePath = fields.get("file_path").getStringValue();
                 }
-                if (fields.containsKey("content")) {
+                // UPDATED: Use content_preview instead of full content (40KB limit fix)
+                if (fields.containsKey("content_preview")) {
+                    content = fields.get("content_preview").getStringValue();
+                } else if (fields.containsKey("content")) {
+                    // Fallback for old vectors that still have 'content'
                     content = fields.get("content").getStringValue();
                 }
             }
@@ -214,6 +218,17 @@ public class PineconeRetriever {
     private CodeContext toCodeContext(ScoredVectorWithUnsignedIndices match) {
         var fields = match.getMetadata() != null ? match.getMetadata().getFieldsMap() : null;
 
+        // UPDATED: Use content_preview instead of full content (40KB limit fix)
+        String content = "";
+        if (fields != null) {
+            if (fields.containsKey("content_preview")) {
+                content = fields.get("content_preview").getStringValue();
+            } else if (fields.containsKey("content")) {
+                // Fallback for old vectors that still have 'content'
+                content = fields.get("content").getStringValue();
+            }
+        }
+
         return new CodeContext(
                 match.getId(),
                 match.getScore(),
@@ -221,7 +236,7 @@ public class PineconeRetriever {
                 fields != null && fields.containsKey("class_name") ? fields.get("class_name").getStringValue() : "",
                 fields != null && fields.containsKey("method_name") ? fields.get("method_name").getStringValue() : "",
                 fields != null && fields.containsKey("file_path") ? fields.get("file_path").getStringValue() : "",
-                fields != null && fields.containsKey("content") ? fields.get("content").getStringValue() : ""
+                content
         );
     }
 

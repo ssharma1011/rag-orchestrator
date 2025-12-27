@@ -1,5 +1,6 @@
 package com.purchasingpower.autoflow.service;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.github.mustachejava.DefaultMustacheFactory;
@@ -96,6 +97,7 @@ public class PromptLibraryService {
     /**
      * YAML structure
      */
+    @JsonIgnoreProperties(ignoreUnknown = true)  // Allow extra fields like "examples" for documentation
     public static class PromptTemplate {
         private String name;
         private String version;

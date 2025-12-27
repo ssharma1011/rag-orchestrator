@@ -7,6 +7,7 @@ import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.IncrementalEmbeddingSyncService;
 import com.purchasingpower.autoflow.service.MavenBuildService;
 import com.purchasingpower.autoflow.storage.Neo4jGraphStore;
+import com.purchasingpower.autoflow.util.GitUrlParser;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -49,16 +50,20 @@ public class CodeIndexerAgent {
         try {
             Map<String, Object> updates = new HashMap<>(state.toMap());
 
-            // Extract repo name using centralized service
-            String repoName = gitService.extractRepoName(state.getRepoUrl());
-            log.info("Repository name: {}", repoName);
+            // Parse Git URL to extract clean repo URL and branch
+            GitUrlParser.ParsedGitUrl parsed = GitUrlParser.parse(state.getRepoUrl());
+            String cleanRepoUrl = parsed.getRepoUrl();
+            String branch = parsed.getBranch();
+            String repoName = parsed.getRepoName();
+
+            log.info("Parsed URL: repo={}, branch={}, name={}", cleanRepoUrl, branch, repoName);
 
             // ================================================================
             // CRITICAL OPTIMIZATION: Skip indexing if already indexed at current commit
             // ================================================================
 
-            // Check current commit in repo (before cloning)
-            String currentCommit = getCurrentCommitFromRemote(state.getRepoUrl(), state.getBaseBranch());
+            // Check current commit in repo (before cloning) - use clean URL
+            String currentCommit = getCurrentCommitFromRemote(cleanRepoUrl, branch);
             String lastIndexedCommit = embeddingSyncService.getLastIndexedCommit(repoName);
 
             if (lastIndexedCommit != null && lastIndexedCommit.equals(currentCommit)) {
@@ -68,7 +73,7 @@ public class CodeIndexerAgent {
                 log.info("   💰 Time saved: ~120 seconds");
 
                 // Still need workspace for reading files during code generation
-                File workspace = getOrCloneWorkspace(state.getRepoUrl(), state.getBaseBranch(), repoName);
+                File workspace = getOrCloneWorkspace(cleanRepoUrl, branch, repoName);
                 updates.put("workspaceDir", workspace.getAbsolutePath());
 
                 // Create a skipped result
@@ -110,7 +115,7 @@ public class CodeIndexerAgent {
             // STEP 1: CLONE OR REUSE WORKSPACE
             // ================================================================
 
-            File workspace = getOrCloneWorkspace(state.getRepoUrl(), state.getBaseBranch(), repoName);
+            File workspace = getOrCloneWorkspace(cleanRepoUrl, branch, repoName);
             updates.put("workspaceDir", workspace.getAbsolutePath());  // CRITICAL: Store as String!
 
             log.info("✅ Workspace ready: {}", workspace.getAbsolutePath());

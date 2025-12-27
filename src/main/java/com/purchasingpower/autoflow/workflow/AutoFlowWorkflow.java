@@ -268,7 +268,7 @@ public class AutoFlowWorkflow {
 
             // Send SSE: Workflow completed
             String completionMessage = finalState.getLastAgentDecision() != null ?
-                    finalState.getLastAgentDecision().getExplanation() :
+                    finalState.getLastAgentDecision().getMessage() :
                     "✅ Workflow completed successfully";
 
             if (streamService != null) {

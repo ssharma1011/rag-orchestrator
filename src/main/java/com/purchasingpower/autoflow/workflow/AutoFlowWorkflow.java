@@ -1,15 +1,17 @@
 package com.purchasingpower.autoflow.workflow;
 
+import com.purchasingpower.autoflow.model.dto.WorkflowEvent;
+import com.purchasingpower.autoflow.service.WorkflowStreamService;
 import com.purchasingpower.autoflow.workflow.agents.*;
 import com.purchasingpower.autoflow.workflow.state.AgentDecision;
 import com.purchasingpower.autoflow.workflow.state.RequirementAnalysis;
 import com.purchasingpower.autoflow.workflow.state.WorkflowState;
 import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.GraphStateException;
 import org.bsc.langgraph4j.StateGraph;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -22,7 +24,6 @@ import static org.bsc.langgraph4j.action.AsyncEdgeAction.edge_async;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class AutoFlowWorkflow {
 
     private final RequirementAnalyzerAgent requirementAnalyzer;
@@ -39,8 +40,43 @@ public class AutoFlowWorkflow {
     private final PRCreatorAgent prCreator;
     private final DocumentationAgent documentationAgent;
 
+    /**
+     * SSE streaming service (optional - may be null if SSE not enabled).
+     */
+    @Autowired(required = false)
+    private WorkflowStreamService streamService;
 
     private CompiledGraph<WorkflowState> compiledGraph;
+
+    public AutoFlowWorkflow(
+            RequirementAnalyzerAgent requirementAnalyzer,
+            LogAnalyzerAgent logAnalyzer,
+            CodeIndexerAgent codeIndexer,
+            ScopeDiscoveryAgent scopeDiscovery,
+            ScopeApprovalAgent scopeApproval,
+            ContextBuilderAgent contextBuilder,
+            CodeGeneratorAgent codeGenerator,
+            BuildValidatorAgent buildValidator,
+            TestRunnerAgent testRunner,
+            PRReviewerAgent prReviewer,
+            ReadmeGeneratorAgent readmeGenerator,
+            PRCreatorAgent prCreator,
+            DocumentationAgent documentationAgent
+    ) {
+        this.requirementAnalyzer = requirementAnalyzer;
+        this.logAnalyzer = logAnalyzer;
+        this.codeIndexer = codeIndexer;
+        this.scopeDiscovery = scopeDiscovery;
+        this.scopeApproval = scopeApproval;
+        this.contextBuilder = contextBuilder;
+        this.codeGenerator = codeGenerator;
+        this.buildValidator = buildValidator;
+        this.testRunner = testRunner;
+        this.prReviewer = prReviewer;
+        this.readmeGenerator = readmeGenerator;
+        this.prCreator = prCreator;
+        this.documentationAgent = documentationAgent;
+    }
 
     @PostConstruct
     public void initialize() throws GraphStateException {
@@ -210,7 +246,16 @@ public class AutoFlowWorkflow {
     }
 
     public WorkflowState execute(WorkflowState initialState) {
-        log.info("🚀 Starting workflow: {}", initialState.getConversationId());
+        String conversationId = initialState.getConversationId();
+        log.info("🚀 Starting workflow: {}", conversationId);
+
+        // Send SSE: Workflow started
+        sendSSE(conversationId, WorkflowEvent.running(
+                conversationId,
+                "workflow",
+                "🚀 Workflow started",
+                0.0
+        ));
 
         Map<String, Object> initialData = new java.util.HashMap<>(initialState.toMap());
         initialData.put("workflowStatus", "RUNNING");
@@ -219,14 +264,40 @@ public class AutoFlowWorkflow {
 
         try {
             Optional<WorkflowState> result = compiledGraph.invoke(initialData);
-            return result.orElse(initialState);
+            WorkflowState finalState = result.orElse(initialState);
+
+            // Send SSE: Workflow completed
+            String completionMessage = finalState.getLastAgentDecision() != null ?
+                    finalState.getLastAgentDecision().getExplanation() :
+                    "✅ Workflow completed successfully";
+
+            if (streamService != null) {
+                streamService.complete(conversationId, completionMessage);
+            }
+
+            return finalState;
 
         } catch (Exception e) {
             log.error("Workflow execution failed", e);
+
+            // Send SSE: Workflow failed
+            if (streamService != null) {
+                streamService.fail(conversationId, e.getMessage());
+            }
+
             Map<String, Object> errorData = new java.util.HashMap<>(initialData);
             errorData.put("workflowStatus", "FAILED");
             errorData.put("lastAgentDecision", AgentDecision.error(e.getMessage()));
             return WorkflowState.fromMap(errorData);
+        }
+    }
+
+    /**
+     * Send SSE update (if streaming is enabled).
+     */
+    private void sendSSE(String conversationId, WorkflowEvent event) {
+        if (streamService != null) {
+            streamService.sendUpdate(conversationId, event);
         }
     }
 

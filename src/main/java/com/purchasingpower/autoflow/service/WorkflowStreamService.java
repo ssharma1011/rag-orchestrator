@@ -8,6 +8,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -21,6 +23,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * 2. WorkflowStreamService creates an SseEmitter
  * 3. AutoFlowWorkflow calls sendUpdate() as agents execute
  * 4. Frontend receives real-time updates via EventSource
+ *
+ * CRITICAL: Buffers early events to handle race condition where workflow
+ * starts before frontend connects to SSE stream.
  */
 @Slf4j
 @Service
@@ -35,9 +40,20 @@ public class WorkflowStreamService {
     private final Map<String, SseEmitter> emitters = new ConcurrentHashMap<>();
 
     /**
+     * Buffer for events sent before client connects.
+     * Key: conversationId, Value: List of buffered events
+     */
+    private final Map<String, List<WorkflowEvent>> eventBuffer = new ConcurrentHashMap<>();
+
+    /**
      * Timeout for SSE connections (5 minutes).
      */
     private static final long SSE_TIMEOUT_MS = 5 * 60 * 1000;
+
+    /**
+     * Max buffered events per conversation (prevent memory leak).
+     */
+    private static final int MAX_BUFFERED_EVENTS = 100;
 
     /**
      * Create a new SSE stream for a conversation.
@@ -66,11 +82,11 @@ public class WorkflowStreamService {
             removeEmitter(conversationId);
         });
 
-        // Store emitter
+        // Store emitter BEFORE sending events
         emitters.put(conversationId, emitter);
 
-        // Send initial connection success event
         try {
+            // Send initial connection success event
             WorkflowEvent initialEvent = WorkflowEvent.builder()
                     .conversationId(conversationId)
                     .status(WorkflowEvent.WorkflowStatus.RUNNING)
@@ -82,8 +98,22 @@ public class WorkflowStreamService {
                     .name("workflow-update")
                     .data(objectMapper.writeValueAsString(initialEvent)));
 
+            // CRITICAL: Replay buffered events if any exist
+            List<WorkflowEvent> bufferedEvents = eventBuffer.remove(conversationId);
+            if (bufferedEvents != null && !bufferedEvents.isEmpty()) {
+                log.info("🔄 Replaying {} buffered events for conversation: {}",
+                        bufferedEvents.size(), conversationId);
+
+                for (WorkflowEvent event : bufferedEvents) {
+                    String json = objectMapper.writeValueAsString(event);
+                    emitter.send(SseEmitter.event()
+                            .name("workflow-update")
+                            .data(json));
+                }
+            }
+
         } catch (IOException e) {
-            log.error("Failed to send initial SSE event", e);
+            log.error("Failed to send SSE events during stream creation", e);
             removeEmitter(conversationId);
         }
 
@@ -93,16 +123,33 @@ public class WorkflowStreamService {
     /**
      * Send a workflow update to all connected clients for this conversation.
      *
+     * CRITICAL: If client hasn't connected yet, buffer the event for replay.
+     *
      * @param conversationId Conversation ID
      * @param event Workflow event to send
      */
     public void sendUpdate(String conversationId, WorkflowEvent event) {
         SseEmitter emitter = emitters.get(conversationId);
+
+        // If no active connection, buffer the event for when client connects
         if (emitter == null) {
-            log.debug("No active SSE stream for conversation: {}", conversationId);
+            List<WorkflowEvent> buffer = eventBuffer.computeIfAbsent(
+                    conversationId,
+                    k -> new ArrayList<>()
+            );
+
+            // Prevent memory leak: limit buffer size
+            if (buffer.size() < MAX_BUFFERED_EVENTS) {
+                buffer.add(event);
+                log.debug("📦 Buffered SSE event (total: {}): conversationId={}, agent={}",
+                        buffer.size(), conversationId, event.getAgent());
+            } else {
+                log.warn("⚠️ Event buffer full for conversation: {} (dropping event)", conversationId);
+            }
             return;
         }
 
+        // Send to connected client
         try {
             String json = objectMapper.writeValueAsString(event);
             emitter.send(SseEmitter.event()
@@ -159,10 +206,11 @@ public class WorkflowStreamService {
     }
 
     /**
-     * Remove emitter from active streams.
+     * Remove emitter from active streams and clean up buffer.
      */
     private void removeEmitter(String conversationId) {
         emitters.remove(conversationId);
+        eventBuffer.remove(conversationId);  // Clean up any remaining buffered events
         log.debug("🗑️ Removed SSE emitter for conversation: {}", conversationId);
     }
 

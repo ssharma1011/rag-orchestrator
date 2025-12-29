@@ -63,6 +63,17 @@ public class DocumentationAgent {
 
             log.info("Found {} relevant code chunks from Pinecone", relevantCode.size());
 
+            // Enhanced logging: Show what code was actually retrieved
+            if (!relevantCode.isEmpty()) {
+                log.info("📋 Retrieved code chunks:");
+                relevantCode.stream().limit(5).forEach(code ->
+                    log.info("  - {} (score: {:.2f}, file: {})",
+                        code.className(), code.score(), code.filePath())
+                );
+            } else {
+                log.warn("⚠️ Pinecone returned ZERO results for query: {}", requirement);
+            }
+
             // FALLBACK: If Pinecone returns 0 results, use Oracle CODE_NODES table
             if (relevantCode.isEmpty()) {
                 log.warn("⚠️ Pinecone returned 0 results - falling back to Oracle CODE_NODES table");
@@ -116,9 +127,16 @@ public class DocumentationAgent {
 
             String prompt = buildPromptFromTemplate(requirement, analysis, relevantCode);
 
+            // Log prompt preview for debugging
+            log.debug("Generated prompt (first 500 chars): {}",
+                prompt.length() > 500 ? prompt.substring(0, 500) + "..." : prompt);
+
             String explanation = geminiClient.generateText(prompt);
 
             log.info("✅ Documentation generated ({} characters)", explanation.length());
+
+            // Validate response quality
+            validateResponseQuality(explanation, relevantCode);
 
             // ================================================================
             // STEP 3: RETURN EXPLANATION (NO CODE GENERATION!)
@@ -178,5 +196,51 @@ public class DocumentationAgent {
 
         // Render using PromptLibraryService
         return promptLibrary.render("documentation-agent", variables);
+    }
+
+    /**
+     * Validates response quality to detect hallucination.
+     *
+     * Logs warnings if response appears generic or ungrounded.
+     */
+    private void validateResponseQuality(String response, List<PineconeRetriever.CodeContext> relevantCode) {
+        if (relevantCode.isEmpty()) {
+            // No code was provided - response should acknowledge this
+            if (!response.contains("No Code Found") &&
+                !response.contains("no indexed code") &&
+                !response.contains("not yet indexed")) {
+
+                log.warn("⚠️ HALLUCINATION DETECTED: No code provided but response doesn't acknowledge this!");
+                log.warn("Response preview: {}", response.substring(0, Math.min(300, response.length())));
+            }
+        } else {
+            // Code was provided - response should reference specific classes/methods
+            Set<String> actualClasses = relevantCode.stream()
+                    .map(PineconeRetriever.CodeContext::className)
+                    .filter(name -> name != null && !name.isEmpty())
+                    .collect(Collectors.toSet());
+
+            // Check if response mentions at least one actual class
+            boolean mentionsActualCode = actualClasses.stream()
+                    .anyMatch(response::contains);
+
+            if (!mentionsActualCode && !actualClasses.isEmpty()) {
+                log.warn("⚠️ POSSIBLE HALLUCINATION: Response doesn't mention any retrieved classes");
+                log.warn("Expected to see references to: {}", actualClasses);
+                log.warn("Response preview: {}", response.substring(0, Math.min(300, response.length())));
+            }
+
+            // Check for common hallucinated class names
+            String[] commonHallucinations = {
+                "UserService", "UserController", "PaymentService", "PaymentController",
+                "OrderService", "ProductService", "AuthenticationService", "CustomerService"
+            };
+
+            for (String hallucination : commonHallucinations) {
+                if (response.contains(hallucination) && !actualClasses.contains(hallucination)) {
+                    log.warn("⚠️ HALLUCINATION DETECTED: Response mentions '{}' which is not in provided code", hallucination);
+                }
+            }
+        }
     }
 }

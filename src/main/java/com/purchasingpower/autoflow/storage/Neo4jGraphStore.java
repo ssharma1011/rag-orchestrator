@@ -431,14 +431,63 @@ public class Neo4jGraphStore {
     }
 
     /**
-     * Clear all code graph data (for reindexing)
+     * Clear all code graph data (for reindexing).
+     *
+     * ⚠️⚠️⚠️ CRITICAL WARNING - DATABASE WIPE DANGER ⚠️⚠️⚠️
+     * ════════════════════════════════════════════════════════════════════════
+     * This method deletes EVERYTHING in the Neo4j database!
+     *
+     * ❌ DOES NOT delete just one repository
+     * ❌ DOES NOT support multi-repo (all repos share the same Neo4j graph)
+     * ✓ Deletes ALL classes, methods, fields, and relationships for ALL repos
+     *
+     * Known limitation:
+     * - Neo4j nodes don't currently have a repoName property
+     * - Cannot selectively delete data for a single repository
+     * - All indexed repositories are mixed together in the same graph
+     *
+     * Use cases:
+     * - Complete database reset during development
+     * - Disaster recovery / corruption cleanup
+     *
+     * DO NOT CALL IN PRODUCTION unless you want to lose ALL indexed code!
+     *
+     * @deprecated This method is dangerous and should be rarely used.
+     *             Consider adding repoName to all nodes to enable repo-specific deletion.
+     * ════════════════════════════════════════════════════════════════════════
      */
+    @Deprecated(since = "1.0", forRemoval = true)
     public void clearAll() {
-        log.warn("CLEARING ALL NEO4J DATA");
+        log.error("⚠️⚠️⚠️ DANGER: Deleting ALL data from Neo4j database! ⚠️⚠️⚠️");
+        log.error("This will delete ALL repositories, ALL classes, ALL methods, ALL relationships!");
+        log.error("If you only want to clear ONE repository, this method cannot do that.");
+        log.error("You must re-index ALL repositories after calling this method.");
+
         try (Session session = driver.session()) {
+            long startTime = System.currentTimeMillis();
+
+            // Count nodes before deletion (for logging)
+            Result countResult = session.run("MATCH (n) RETURN count(n) as count");
+            long nodeCount = countResult.single().get("count").asLong();
+
+            log.warn("Deleting {} nodes from Neo4j...", nodeCount);
+
+            // Delete everything
             session.run("MATCH (n) DETACH DELETE n");
+
+            long duration = System.currentTimeMillis() - startTime;
+            log.warn("✅ Deleted {} nodes in {}ms. Database is now empty.", nodeCount, duration);
+        } catch (Exception e) {
+            log.error("Failed to clear Neo4j database", e);
+            throw new RuntimeException("Failed to clear Neo4j database", e);
         }
     }
+
+    // TODO: Add repo-specific deletion once repoName is added to all nodes
+    // public void clearRepo(String repoName) {
+    //     session.run("MATCH (n {repoName: $repoName}) DETACH DELETE n",
+    //                 Collections.singletonMap("repoName", repoName));
+    // }
 
     // ================================================================
     // CONVERSION METHODS

@@ -245,11 +245,6 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
                 callCtx.logError("HTTP error (non-retryable or retries exhausted)", e);
                 log.error("❌ Failed to fetch last indexed commit: {}", e.getMessage());
                 return null;
-
-            } catch (Exception e) {
-                callCtx.logError("Unexpected error", e);
-                log.error("❌ Failed to fetch last indexed commit: {}", e.getMessage(), e);
-                return null;
             }
         }
 

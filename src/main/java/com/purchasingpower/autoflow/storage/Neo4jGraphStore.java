@@ -110,7 +110,8 @@ public class Neo4jGraphStore {
                 "Relationships", graph.getTotalRelationships());
 
         try (Session session = driver.session()) {
-            session.writeTransaction(tx -> {
+            // ✅ FIX: Use executeWrite instead of deprecated writeTransaction
+            session.executeWrite(tx -> {
                 for (ClassNode classNode : graph.getClasses()) {
                     storeClassNode(tx, classNode);
                 }
@@ -323,7 +324,8 @@ public class Neo4jGraphStore {
             """;
 
         try (Session session = driver.session()) {
-            return session.readTransaction(tx -> {
+            // ✅ FIX: Use executeRead instead of deprecated readTransaction
+            return session.executeRead(tx -> {
                 Result result = tx.run(cypher, Collections.singletonMap("fqn", fullyQualifiedClassName));
                 return result.stream()
                         .map(record -> nodeToClassNode(record.get("dep").asNode()))
@@ -344,7 +346,8 @@ public class Neo4jGraphStore {
             """;
 
         try (Session session = driver.session()) {
-            return session.readTransaction(tx -> {
+            // ✅ FIX: Use executeRead instead of deprecated readTransaction
+            return session.executeRead(tx -> {
                 Result result = tx.run(cypher, Collections.singletonMap("methodName", methodName));
                 return result.stream()
                         .map(record -> nodeToMethodNode(record.get("caller").asNode()))
@@ -364,7 +367,8 @@ public class Neo4jGraphStore {
             """;
 
         try (Session session = driver.session()) {
-            return session.readTransaction(tx -> {
+            // ✅ FIX: Use executeRead instead of deprecated readTransaction
+            return session.executeRead(tx -> {
                 Result result = tx.run(cypher, Collections.singletonMap("fqn", fullyQualifiedClassName));
                 return result.stream()
                         .map(record -> nodeToClassNode(record.get("subclass").asNode()))
@@ -384,7 +388,8 @@ public class Neo4jGraphStore {
             """;
 
         try (Session session = driver.session()) {
-            return session.readTransaction(tx -> {
+            // ✅ FIX: Use executeRead instead of deprecated readTransaction
+            return session.executeRead(tx -> {
                 Result result = tx.run(cypher, Collections.singletonMap("fqn", fullyQualifiedClassName));
                 return result.stream()
                         .map(record -> nodeToMethodNode(record.get("m").asNode()))
@@ -404,7 +409,8 @@ public class Neo4jGraphStore {
             """;
 
         try (Session session = driver.session()) {
-            return session.readTransaction(tx -> {
+            // ✅ FIX: Use executeRead instead of deprecated readTransaction
+            return session.executeRead(tx -> {
                 Result result = tx.run(cypher, Collections.singletonMap("fqn", fullyQualifiedClassName));
                 return result.stream()
                         .map(record -> nodeToFieldNode(record.get("f").asNode()))
@@ -420,7 +426,8 @@ public class Neo4jGraphStore {
         String cypher = "MATCH (c:Class {id: $id}) RETURN c";
 
         try (Session session = driver.session()) {
-            return session.readTransaction(tx -> {
+            // ✅ FIX: Use executeRead instead of deprecated readTransaction
+            return session.executeRead(tx -> {
                 Result result = tx.run(cypher, Collections.singletonMap("id", id));
                 if (result.hasNext()) {
                     return nodeToClassNode(result.single().get("c").asNode());

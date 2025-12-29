@@ -376,6 +376,27 @@ public class CodeIndexerAgent {
 
         } catch (Exception e) {
             log.error("Code indexing failed", e);
+
+            // ✅ FIX: Explicitly rollback transaction to prevent data loss
+            // Problem: We catch exceptions to show user-friendly errors, but this prevents
+            // Spring's automatic rollback (which only happens on uncaught exceptions).
+            // Solution: Mark transaction for rollback explicitly before returning.
+            //
+            // Data loss scenario without this fix:
+            // 1. deleteByRepoName() succeeds → old nodes deleted
+            // 2. saveAll() fails → exception thrown
+            // 3. Exception caught here → transaction commits (!)
+            // 4. Result: Old nodes deleted, new nodes not saved → DATA LOSS
+            try {
+                org.springframework.transaction.interceptor.TransactionAspectSupport
+                        .currentTransactionStatus()
+                        .setRollbackOnly();
+                log.debug("Transaction marked for rollback");
+            } catch (Exception txEx) {
+                // No active transaction (e.g., in tests) - that's okay
+                log.debug("No active transaction to rollback: {}", txEx.getMessage());
+            }
+
             Map<String, Object> updates = new HashMap<>(state.toMap());
 
             // Return error result

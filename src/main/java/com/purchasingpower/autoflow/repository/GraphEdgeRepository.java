@@ -41,8 +41,18 @@ public interface GraphEdgeRepository extends JpaRepository<GraphEdge, Long> {
 
     /**
      * Delete all edges for a repository.
+     *
+     * IMPORTANT: Uses bulk DELETE query for performance and atomicity.
+     * Derived delete methods execute SELECT + N individual DELETEs (slow!).
+     * This custom query executes a single bulk DELETE (fast!).
+     *
+     * @Modifying tells Spring this modifies data (not a SELECT)
+     * @Transactional ensures atomicity with surrounding operations
      */
-    void deleteByRepoName(String repoName);
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("DELETE FROM GraphEdge e WHERE e.repoName = :repoName")
+    void deleteByRepoName(@Param("repoName") String repoName);
 
     /**
      * Find all transitive dependencies (recursive query).

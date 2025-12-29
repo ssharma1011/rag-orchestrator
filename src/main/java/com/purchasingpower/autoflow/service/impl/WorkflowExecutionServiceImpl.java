@@ -233,6 +233,9 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
 
         } catch (Exception e) {
             log.error("Failed to save workflow state", e);
+            // ✅ FIX CRITICAL #1: Re-throw exception to prevent data loss
+            // If save fails, workflow MUST NOT continue with unsaved state
+            throw new RuntimeException("CRITICAL: Failed to persist workflow state - cannot continue", e);
         }
     }
 }

@@ -173,8 +173,18 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
             // Save final state
             saveWorkflowState(result);
 
-            // Update cache
-            activeWorkflows.put(result.getConversationId(), result);
+            // ✅ FIX CRITICAL #2: Remove completed workflows from cache to prevent memory leak
+            // BEFORE: activeWorkflows.put() → workflows never removed → OOM after 10k workflows
+            // AFTER: Remove from cache when workflow terminates (COMPLETED, FAILED, CANCELLED)
+            String finalStatus = result.getWorkflowStatus();
+            if ("COMPLETED".equals(finalStatus) || "FAILED".equals(finalStatus) ||
+                "CANCELLED".equals(finalStatus)) {
+                activeWorkflows.remove(result.getConversationId());
+                log.debug("Removed completed workflow from cache: {}", result.getConversationId());
+            } else {
+                // Only keep in cache if still RUNNING or PAUSED
+                activeWorkflows.put(result.getConversationId(), result);
+            }
 
             log.info("Workflow execution completed: {} - status: {}",
                     result.getConversationId(),

@@ -284,10 +284,9 @@ public class AutoFlowWorkflow {
                     .forEach(nodeOutput -> {
                         // Send SSE update for each agent execution
                         String nodeName = nodeOutput.node();
-                        // nodeOutput.state() returns Map<String, Object>, need to convert to WorkflowState
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> stateMap = (Map<String, Object>) nodeOutput.state();
-                        WorkflowState currentState = WorkflowState.fromMap(stateMap);
+                        // ✅ FIX: nodeOutput.state() returns WorkflowState directly (not Map)
+                        // because graph is StateGraph<WorkflowState>
+                        WorkflowState currentState = nodeOutput.state();
 
                         // Calculate progress (rough estimate based on node)
                         double progress = calculateProgress(nodeName);

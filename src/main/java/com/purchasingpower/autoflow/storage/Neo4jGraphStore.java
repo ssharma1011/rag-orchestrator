@@ -135,7 +135,8 @@ public class Neo4jGraphStore {
         }
     }
 
-    private void storeClassNode(Transaction tx, ClassNode classNode) {
+    // ✅ FIX: Changed from Transaction to TransactionContext for new Neo4j API
+    private void storeClassNode(org.neo4j.driver.TransactionContext tx, ClassNode classNode) {
         String cypher = """
             MERGE (c:Class {id: $id})
             SET c.name = $name,
@@ -180,7 +181,7 @@ public class Neo4jGraphStore {
         tx.run(cypher, params);
     }
 
-    private void storeMethodNode(Transaction tx, MethodNode methodNode) {
+    private void storeMethodNode(org.neo4j.driver.TransactionContext tx, MethodNode methodNode) {
         String cypher = """
             MERGE (m:Method {id: $id})
             SET m.name = $name,
@@ -226,7 +227,7 @@ public class Neo4jGraphStore {
         tx.run(cypher, params);
     }
 
-    private void storeFieldNode(Transaction tx, FieldNode fieldNode) {
+    private void storeFieldNode(org.neo4j.driver.TransactionContext tx, FieldNode fieldNode) {
         String cypher = """
             MERGE (f:Field {id: $id})
             SET f.name = $name,
@@ -266,7 +267,7 @@ public class Neo4jGraphStore {
         tx.run(cypher, params);
     }
 
-    private void storeRelationship(Transaction tx, CodeRelationship rel) {
+    private void storeRelationship(org.neo4j.driver.TransactionContext tx, CodeRelationship rel) {
         // ✅ CYPHER INJECTION SAFETY: Why this String.format is safe
         // ──────────────────────────────────────────────────────────────────────────
         // This uses String.format() to inject the relationship type, but it's SAFE because:

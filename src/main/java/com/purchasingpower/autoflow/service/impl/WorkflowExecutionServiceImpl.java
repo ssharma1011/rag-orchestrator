@@ -107,33 +107,52 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
     public WorkflowState getWorkflowState(String conversationId) {
         log.debug("Getting workflow state: {}", conversationId);
 
-        // Check cache first
-        WorkflowState cached = activeWorkflows.get(conversationId);
-        if (cached != null) {
-            return cached;
-        }
+        // ✅ THREAD SAFETY FIX: Use computeIfAbsent for atomic cache population
+        // ─────────────────────────────────────────────────────────────────────────
+        // OLD CODE (RACE CONDITION):
+        //   WorkflowState cached = activeWorkflows.get(conversationId);
+        //   if (cached != null) return cached;
+        //   // Load from database
+        //   WorkflowState loaded = loadFromDb();
+        //   activeWorkflows.put(conversationId, loaded);  // ← Race condition!
+        //
+        // Problem:
+        //   Thread A: get() returns null
+        //   Thread B: get() returns null (same time!)
+        //   Thread A: Loads from database
+        //   Thread B: Loads from database (duplicate load!)
+        //   Thread A: put() into cache
+        //   Thread B: put() into cache (overwrites A's value!)
+        //
+        // FIX: computeIfAbsent is atomic - only ONE thread loads from database
+        // ─────────────────────────────────────────────────────────────────────────
+        return activeWorkflows.computeIfAbsent(conversationId, id -> {
+            log.debug("Cache miss, loading workflow from database: {}", id);
 
-        // Load from database
-        try {
-            WorkflowStateEntity entity = stateRepository.findByConversationId(conversationId)
-                    .orElse(null);
+            try {
+                WorkflowStateEntity entity = stateRepository.findByConversationId(id)
+                        .orElse(null);
 
-            if (entity == null) {
+                if (entity == null) {
+                    log.debug("Workflow not found in database: {}", id);
+                    return null;
+                }
+
+                @SuppressWarnings("unchecked")
+                Map<String, Object> stateMap = objectMapper.readValue(
+                        entity.getStateJson(),
+                        Map.class
+                );
+
+                WorkflowState loaded = WorkflowState.fromMap(stateMap);
+                log.debug("✅ Loaded workflow from database: {}", id);
+                return loaded;
+
+            } catch (Exception e) {
+                log.error("Failed to load workflow state: {}", id, e);
                 return null;
             }
-
-            @SuppressWarnings("unchecked")
-            Map<String, Object> stateMap = objectMapper.readValue(
-                    entity.getStateJson(),
-                    Map.class
-            );
-
-            return WorkflowState.fromMap(stateMap);
-
-        } catch (Exception e) {
-            log.error("Failed to load workflow state", e);
-            return null;
-        }
+        });
     }
 
     @Override

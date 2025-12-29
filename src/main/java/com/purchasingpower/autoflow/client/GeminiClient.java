@@ -37,8 +37,20 @@ public class GeminiClient {
 
     @PostConstruct
     public void init() {
+        // ✅ SECURITY FIX: Use header-based authentication instead of query parameters
+        // Old way: /{version}/models/{model}:{action}?key=API_KEY
+        //   - API key appears in server logs (access.log)
+        //   - API key appears in proxy logs
+        //   - API key appears in browser history
+        //   - API key may be cached by intermediaries
+        //
+        // New way: x-goog-api-key: API_KEY header
+        //   - API key only in request headers (not logged by default)
+        //   - Not visible in URLs
+        //   - More secure according to OAuth 2.0 / REST best practices
         this.geminiWebClient = WebClient.builder()
                 .baseUrl(props.getGemini().getBaseUrl())
+                .defaultHeader("x-goog-api-key", props.getGemini().getApiKey())  // ✅ Use header instead of query param
                 .exchangeStrategies(ExchangeStrategies.builder()
                         .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
                         .build())
@@ -46,8 +58,9 @@ public class GeminiClient {
     }
 
     private String getApiUrl(String model, String action) {
-        return String.format("/%s/models/%s:%s?key=%s",
-                props.getGemini().getApiVersion(), model, action, props.getGemini().getApiKey());
+        // ✅ SECURITY FIX: Remove API key from URL (now in header)
+        return String.format("/%s/models/%s:%s",
+                props.getGemini().getApiVersion(), model, action);
     }
 
     public List<List<Double>> batchCreateEmbeddings(List<String> texts) {

@@ -8,6 +8,7 @@ import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.IncrementalEmbeddingSyncService;
 import com.purchasingpower.autoflow.service.MavenBuildService;
 import com.purchasingpower.autoflow.storage.Neo4jGraphStore;
+import com.purchasingpower.autoflow.util.GitInputValidator;
 import com.purchasingpower.autoflow.util.GitUrlParser;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
@@ -445,6 +446,11 @@ public class CodeIndexerAgent {
                 // Pull latest changes using git command
                 try {
                     log.info("Pulling latest changes...");
+
+                    // ✅ SECURITY: Validate branch name to prevent command injection
+                    // Attack example: branch = "main; rm -rf /" → would execute malicious command
+                    GitInputValidator.validateBranchName(branch);
+
                     ProcessBuilder pb = new ProcessBuilder("git", "pull", "origin", branch);
                     pb.directory(workspace);
                     pb.redirectErrorStream(true);
@@ -477,6 +483,14 @@ public class CodeIndexerAgent {
     private String getCurrentCommitFromRemote(String repoUrl, String branch) {
         try {
             log.debug("Querying remote commit for branch: {}", branch);
+
+            // ✅ SECURITY: Validate inputs to prevent command injection
+            // Attack examples:
+            // - repoUrl = "https://github.com/user/repo; rm -rf /"
+            // - branch = "main && curl http://evil.com"
+            GitInputValidator.validateRepoUrl(repoUrl);
+            GitInputValidator.validateBranchName(branch);
+
             ProcessBuilder pb = new ProcessBuilder(
                     "git", "ls-remote", repoUrl, "refs/heads/" + branch
             );

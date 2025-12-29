@@ -266,13 +266,33 @@ public class Neo4jGraphStore {
     }
 
     private void storeRelationship(Transaction tx, CodeRelationship rel) {
+        // ✅ CYPHER INJECTION SAFETY: Why this String.format is safe
+        // ──────────────────────────────────────────────────────────────────────────
+        // This uses String.format() to inject the relationship type, but it's SAFE because:
+        //
+        // 1. rel.getType() returns a DependencyEdge.RelationshipType enum
+        // 2. Enums have a fixed, compile-time set of values (INJECTS, RETURNS, ACCEPTS, etc.)
+        // 3. Users CANNOT inject arbitrary values through enum types
+        //
+        // WHY NOT use a parameter ($relType)?
+        // Neo4j Cypher does NOT support parameterized relationship types:
+        //   ✗ Invalid: MERGE (from)-[r:$relType]->(to)
+        //   ✓ Valid:   MERGE (from)-[r:EXTENDS]->(to)
+        //
+        // DEFENSIVE VALIDATION: We validate that type is from the enum
+        if (rel.getType() == null) {
+            throw new IllegalArgumentException("Relationship type cannot be null");
+        }
+        // .name() will throw NPE if type is null (defensive check above prevents this)
+        String relationshipType = rel.getType().name();  // Guaranteed to be enum value
+
         String cypher = String.format("""
             MATCH (from {id: $fromId})
             MATCH (to {id: $toId})
             MERGE (from)-[r:%s]->(to)
             SET r.sourceFile = $sourceFile,
                 r.lineNumber = $lineNumber
-            """, rel.getType().name());
+            """, relationshipType);
 
         Map<String, Object> params = createParams(
                 "fromId", rel.getFromId(),

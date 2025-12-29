@@ -281,7 +281,8 @@ public class ScopeDiscoveryAgent {
                     data.put("purpose", purpose);
 
                     // FIXED: Get actual dependencies from graph edges
-                    List<String> dependencies = graphTraversalService.findDirectDependencies(
+                    // ✅ FIX: Variable is graphTraversal, not graphTraversalService
+                    List<String> dependencies = graphTraversal.findDirectDependencies(
                                     node.getNodeId(), repoName)
                             .stream()
                             .map(depId -> {

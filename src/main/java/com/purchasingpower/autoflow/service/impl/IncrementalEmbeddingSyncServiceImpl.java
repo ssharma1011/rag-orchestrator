@@ -220,11 +220,13 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
                 log.warn("⚠️ Metadata vector found but missing 'last_indexed_commit' field");
                 return null;
 
-            } catch (PineconeUnmappedHttpException e) {
+            } catch (Exception e) {
                 // ONLY retry on server-side errors (502, 503, etc.)
-                boolean isServerError = e.getMessage().contains("502") ||
-                                       e.getMessage().contains("503") ||
-                                       e.getMessage().contains("504");
+                // ✅ FIX: PineconeUnmappedHttpException doesn't exist - use generic Exception
+                String errorMsg = e.getMessage() != null ? e.getMessage() : "";
+                boolean isServerError = errorMsg.contains("502") ||
+                                       errorMsg.contains("503") ||
+                                       errorMsg.contains("504");
 
                 if (isServerError && attempt < 3) {
                     long delayMs = (long) Math.pow(2, attempt) * 1000;

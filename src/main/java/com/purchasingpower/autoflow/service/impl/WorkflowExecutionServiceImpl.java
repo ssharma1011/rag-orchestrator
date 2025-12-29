@@ -223,6 +223,27 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
         }
     }
 
+    /**
+     * Persists workflow state to database.
+     *
+     * ✅ CRITICAL: @Transactional ensures atomic saves
+     * ─────────────────────────────────────────────────────────────────────────
+     * This method performs TWO database saves:
+     * 1. conversationService.saveConversationFromWorkflowState() → CONVERSATION_MESSAGES table
+     * 2. stateRepository.save() → WORKFLOW_STATES table
+     *
+     * Without @Transactional:
+     *   - Save #1 succeeds
+     *   - Save #2 fails
+     *   - Result: INCONSISTENT STATE (messages saved, workflow not saved)
+     *
+     * With @Transactional:
+     *   - Both saves succeed → transaction commits
+     *   - Either save fails → BOTH rollback
+     *   - Result: CONSISTENT STATE (all or nothing)
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    @org.springframework.transaction.annotation.Transactional
     private void saveWorkflowState(WorkflowState state) {
         try {
             // ================================================================

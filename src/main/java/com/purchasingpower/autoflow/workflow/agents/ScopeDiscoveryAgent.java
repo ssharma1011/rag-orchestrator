@@ -8,6 +8,7 @@ import com.purchasingpower.autoflow.repository.GraphNodeRepository;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
 import com.purchasingpower.autoflow.service.graph.GraphTraversalService;
+import com.purchasingpower.autoflow.util.GitUrlParser;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,7 +35,8 @@ public class ScopeDiscoveryAgent {
         log.info("🔍 Discovering scope for: {}", state.getRequirement());
 
         RequirementAnalysis req = state.getRequirementAnalysis();
-        String repoName = gitService.extractRepoName(state.getRepoUrl());
+        // ✅ FIX: Parse URL correctly to extract repo name (handles /tree/branch URLs)
+        String repoName = GitUrlParser.parse(state.getRepoUrl()).getRepoName();
 
         try {
             List<GraphNode> candidates = findCandidateClasses(req, repoName);

@@ -4,6 +4,7 @@ import com.purchasingpower.autoflow.model.neo4j.ClassNode;
 import com.purchasingpower.autoflow.query.HybridRetriever;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.storage.Neo4jGraphStore;
+import com.purchasingpower.autoflow.util.GitUrlParser;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,7 +33,8 @@ public class ContextBuilderAgent {
 
         try {
             ScopeProposal scope = state.getScopeProposal();
-            String repoName = gitService.extractRepoName(state.getRepoUrl());
+            // ✅ FIX: Parse URL correctly to extract repo name (handles /tree/branch URLs)
+            String repoName = GitUrlParser.parse(state.getRepoUrl()).getRepoName();
             File workspace = state.getWorkspaceDir();
 
             StructuredContext context = buildContext(scope, repoName, workspace);

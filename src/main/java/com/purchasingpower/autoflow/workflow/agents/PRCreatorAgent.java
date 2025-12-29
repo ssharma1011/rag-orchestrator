@@ -2,6 +2,7 @@ package com.purchasingpower.autoflow.workflow.agents;
 
 import com.purchasingpower.autoflow.service.BitbucketService;
 import com.purchasingpower.autoflow.service.GitOperationsService;
+import com.purchasingpower.autoflow.util.GitUrlParser;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,7 +36,8 @@ public class PRCreatorAgent {
             log.info("Pushed commits to: {}", branchName);
 
             // Create PR - FIX: Use correct parameter order
-            String repoName = gitService.extractRepoName(state.getRepoUrl());
+            // ✅ FIX: Parse URL correctly to extract repo name (handles /tree/branch URLs)
+            String repoName = GitUrlParser.parse(state.getRepoUrl()).getRepoName();
             String baseBranch = state.getBaseBranch() != null ? state.getBaseBranch() : "develop";
             
             String prUrl = bitbucketService.createPullRequest(

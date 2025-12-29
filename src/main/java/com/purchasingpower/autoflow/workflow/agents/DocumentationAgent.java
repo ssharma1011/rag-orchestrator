@@ -4,6 +4,7 @@ import com.purchasingpower.autoflow.client.GeminiClient;
 import com.purchasingpower.autoflow.client.PineconeRetriever;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
+import com.purchasingpower.autoflow.util.GitUrlParser;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,8 +53,11 @@ public class DocumentationAgent {
             // Create embedding for the question
             List<Double> queryEmbedding = geminiClient.createEmbedding(requirement);
 
+            // ✅ FIX: Parse URL correctly to extract repo name (handles /tree/branch URLs)
+            GitUrlParser.ParsedGitUrl parsed = GitUrlParser.parse(state.getRepoUrl());
+            String repoName = parsed.getRepoName();
+
             // Search Pinecone
-            String repoName = gitService.extractRepoName(state.getRepoUrl());
             List<PineconeRetriever.CodeContext> relevantCode =
                     pineconeRetriever.findRelevantCodeStructured(queryEmbedding, repoName);
 

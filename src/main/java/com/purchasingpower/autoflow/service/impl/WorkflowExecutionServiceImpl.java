@@ -146,7 +146,14 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
                 );
 
                 WorkflowState loaded = WorkflowState.fromMap(stateMap);
+
+                // DEBUG: Log what's in the database and what gets deserialized
                 log.debug("✅ Loaded workflow from database: {}", id);
+                log.debug("🔍 Raw JSON size: {} chars", entity.getStateJson().length());
+                log.debug("🔍 StateMap keys: {}", stateMap.keySet());
+                log.debug("🔍 ConversationHistory in map: {}", stateMap.get("conversationHistory"));
+                log.debug("🔍 ConversationHistory after deserialization: {}", loaded.getConversationHistory());
+
                 return loaded;
 
             } catch (Exception e) {
@@ -258,8 +265,13 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
             // ================================================================
             // Also save to WORKFLOW_STATES (JSON snapshot for compatibility)
             // ================================================================
+            // DEBUG: Log what's being saved
+            log.debug("🔍 Saving workflow state - conversationHistory size: {}",
+                    state.getConversationHistory() != null ? state.getConversationHistory().size() : "null");
+
             // Serialize state to JSON
             String stateJson = objectMapper.writeValueAsString(state);
+            log.debug("🔍 Serialized JSON size: {} chars", stateJson.length());
 
             // Find existing entity or create new
             WorkflowStateEntity entity = stateRepository

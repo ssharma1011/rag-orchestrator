@@ -160,8 +160,8 @@ public class ScopeApprovalAgent {
         // Load and execute scope-approval.yaml prompt
         String promptText = promptLibraryService.render("scope-approval", context);
 
-        // Call Gemini with JSON response format
-        String jsonResponse = geminiClient.generateJson(
+        // Call Gemini to get approval interpretation
+        String jsonResponse = geminiClient.callChatApi(
             promptText,
             "scope-approval",
             conversationId

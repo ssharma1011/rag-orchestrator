@@ -32,6 +32,15 @@ spring:
         dialect: org.hibernate.dialect.OracleDialect
         format_sql: true
 
+  # ==============================================================
+  # NEO4J CONFIGURATION
+  # ==============================================================
+  neo4j:
+    uri: ${NEO4J_URI:bolt://localhost:7687}
+    authentication:
+      username: ${NEO4J_USER:neo4j}
+      password: ${NEO4J_PASSWORD:password}
+
 # ==============================================================
 # CUSTOM APP PROPERTIES
 # ==============================================================
@@ -199,15 +208,6 @@ app:
       test-command: "mvn -B test"
       timeout-minutes: 30
 
-
-# ==============================================================
-# NEO4J SPRING PROPERTIES
-# ==============================================================
-neo4j:
-  uri: ${NEO4J_URI:bolt://localhost:7687}
-  authentication:
-    username: ${NEO4J_USER:neo4j}
-    password: ${NEO4J_PASSWORD:password}
 
 logging:
   level:

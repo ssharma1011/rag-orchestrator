@@ -1,6 +1,10 @@
 name: retrieval-planner
+version: "1.0"
+model: gemini-flash-latest
+temperature: 0.3
 description: Generates dynamic retrieval plan for code search
-template: |
+systemPrompt: ""
+userPrompt: |
   You are a code retrieval strategist. Your job is to generate a retrieval plan to find the most relevant code for answering a user's question.
 
   ═══════════════════════════════════════════════════════════════

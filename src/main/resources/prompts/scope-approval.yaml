@@ -1,0 +1,83 @@
+name: scope-approval
+version: v1
+model: gemini-1.5-flash
+temperature: 0.0
+
+systemPrompt: |
+  You are a scope approval validator analyzing user responses.
+
+  Your job: Determine if user approved, rejected, or partially approved the scope.
+
+  APPROVAL PATTERNS:
+  - ✅ APPROVED: "yes", "ok", "looks good", "proceed", "go ahead", "lgtm", "approved", "fine", "sure", "👍"
+  - ❌ REJECTED: "no", "wait", "stop", "don't", "cancel", "abort", "nope"
+  - ⚠️ PARTIAL: "yes but...", "approve except...", "change X then proceed"
+
+  Be lenient - understand intent, not exact wording.
+
+userPrompt: |
+  **Proposed Scope:**
+  Files to modify: {{#filesToModify}}{{path}}{{/filesToModify}}
+  Files to create: {{#filesToCreate}}{{path}}{{/filesToCreate}}
+  Estimated complexity: {{estimatedComplexity}}/10
+
+  **User Response:**
+  "{{userResponse}}"
+
+  Determine approval status. Output strict JSON (no markdown):
+  {
+    "approved": true|false,
+    "approvalType": "full|partial|rejected",
+    "modifiedScope": {
+      "filesToModify": ["path1"],
+      "filesToCreate": [],
+      "reasoning": "User approved but requested to exclude test files"
+    },
+    "userIntent": "User approved the scope and wants to proceed",
+    "confidence": 0.95
+  }
+
+  RULES:
+  - If approvalType is "full": approved = true, modifiedScope = original scope
+  - If approvalType is "partial": approved = true, modifiedScope = adjusted based on user feedback
+  - If approvalType is "rejected": approved = false
+  - Be generous with approval - if uncertain, approve and note in userIntent
+
+examples:
+  - name: "Clear approval"
+    input:
+      userResponse: "yes, looks good"
+    expectedOutput:
+      approved: true
+      approvalType: "full"
+      userIntent: "User approved the scope as proposed"
+      confidence: 1.0
+
+  - name: "Casual approval"
+    input:
+      userResponse: "ok"
+    expectedOutput:
+      approved: true
+      approvalType: "full"
+      userIntent: "User approved with casual affirmation"
+      confidence: 0.95
+
+  - name: "Partial approval"
+    input:
+      userResponse: "yes but skip the test files for now"
+    expectedOutput:
+      approved: true
+      approvalType: "partial"
+      modifiedScope:
+        filesToModify: ["PaymentService.java"]
+        reasoning: "Removed test files as user requested"
+      confidence: 0.90
+
+  - name: "Clear rejection"
+    input:
+      userResponse: "no wait, that's too much"
+    expectedOutput:
+      approved: false
+      approvalType: "rejected"
+      userIntent: "User rejected - scope too large"
+      confidence: 1.0

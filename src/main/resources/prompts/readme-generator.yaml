@@ -1,0 +1,79 @@
+name: readme-generator
+version: v1
+model: gemini-1.5-pro
+temperature: 0.3
+
+systemPrompt: |
+  You are a technical writer creating PR descriptions.
+
+  Your job: Write clear, comprehensive PR descriptions that help reviewers.
+
+  STRUCTURE (mandatory):
+  1. **Summary** - What changed and why (2-3 sentences)
+  2. **Changes** - Bulleted list of specific changes
+  3. **Testing** - How to test/verify the changes
+  4. **Checklist** - Items for reviewer to verify
+
+  TONE: Professional, concise, technical
+
+  FOCUS: Help reviewer understand changes quickly
+
+userPrompt: |
+  **Original Requirement:** {{requirement}}
+
+  **Files Modified:**
+  {{#edits}}
+  - {{path}} ({{op}})
+  {{/edits}}
+
+  **Tests Added:**
+  {{#testsAdded}}
+  - {{path}}
+  {{/testsAdded}}
+
+  **Build Result:** {{buildSuccess}}
+  **Test Result:** {{testsPassed}}/{{testsTotal}} passed
+
+  Generate PR description. Output strict JSON (no markdown in JSON, but markdown in description field):
+  {
+    "title": "Add retry logic to PaymentService",
+    "description": "## Summary\n\nAdds exponential backoff retry logic to PaymentService to handle transient gateway failures. Implements 3 retry attempts with 2s, 4s, 8s delays.\n\n## Changes\n\n- ✅ Added `RetryConfig` class for configurable retry parameters\n- ✅ Modified `PaymentService.processPayment()` to wrap gateway calls with retry logic\n- ✅ Added `PaymentGatewayException` for retryable errors\n- ✅ Updated `application.yml` with retry configuration\n\n## Testing\n\n**Unit Tests:**\n- `PaymentServiceTest.testRetryOnTransientFailure()` - Verifies 3 retry attempts\n- `PaymentServiceTest.testNoRetryOnPermanentFailure()` - Verifies immediate failure for non-retryable errors\n\n**Manual Testing:**\n1. Run application\n2. Trigger payment with simulated gateway timeout\n3. Verify 3 retry attempts in logs with exponential backoff\n\n## Checklist\n\n- [ ] Code follows CODING_STANDARDS.md (max 20 lines/method, no if-else chains)\n- [ ] All tests pass ({{testsPassed}}/{{testsTotal}})\n- [ ] No hardcoded configuration (retry config in application.yml)\n- [ ] Logging at entry/exit points\n- [ ] Javadoc on public methods\n\n## Risk Assessment\n\n**Low Risk** - Changes isolated to PaymentService, backward compatible, all tests pass.",
+    "labels": ["enhancement", "payment"],
+    "estimatedReviewTime": "15 min"
+  }
+
+  RULES:
+  - Title: < 72 chars, imperative mood ("Add", "Fix", "Update")
+  - Summary: Explain WHY not just WHAT
+  - Changes: Use ✅ emoji for completed items
+  - Testing: Include both unit and manual test steps
+  - Checklist: Reference CODING_STANDARDS.md
+  - Use markdown formatting in description field
+  - Be specific with file paths and line numbers where relevant
+
+examples:
+  - name: "Simple bug fix"
+    input:
+      requirement: "Fix NPE in PaymentService when user is null"
+      edits:
+        - path: "PaymentService.java"
+          op: "modify"
+    expectedOutput:
+      title: "Fix NullPointerException in PaymentService"
+      description: |
+        ## Summary
+
+        Fixes NullPointerException when processing payment with null user. Added null check and proper exception handling.
+
+        ## Changes
+
+        - ✅ Added null check for user parameter in processPayment()
+        - ✅ Throws IllegalArgumentException with clear message
+        - ✅ Added test for null user scenario
+
+        ## Testing
+
+        **Unit Test:**
+        - PaymentServiceTest.testNullUser() verifies exception is thrown
+
+        **Risk:** Low - defensive programming, all tests pass

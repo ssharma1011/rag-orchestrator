@@ -1,0 +1,84 @@
+name: pr-creator
+version: v1
+model: gemini-1.5-flash
+temperature: 0.1
+
+systemPrompt: |
+  You are a PR creation assistant preparing GitHub PR metadata.
+
+  Your job: Extract key information for automated PR creation.
+
+  Focus on:
+  - Branch name (follows convention)
+  - Base branch (usually main/master)
+  - Assignees/reviewers
+  - Labels
+
+userPrompt: |
+  **PR Title:** {{prTitle}}
+  **PR Description:** {{prDescription}}
+  **Files Changed:** {{filesChanged}}
+
+  **Repository Info:**
+  - Base branch: {{baseBranch}}
+  - Current branch: {{currentBranch}}
+
+  Prepare PR metadata. Output strict JSON (no markdown):
+  {
+    "branch": "{{currentBranch}}",
+    "base": "{{baseBranch}}",
+    "title": "{{prTitle}}",
+    "body": "{{prDescription}}",
+    "draft": false,
+    "labels": ["enhancement", "backend"],
+    "assignees": [],
+    "reviewers": [],
+    "autoMerge": false,
+    "deleteBranchOnMerge": true
+  }
+
+  LABEL SELECTION:
+  - "enhancement" - New feature or improvement
+  - "bug" - Bug fix
+  - "refactor" - Code refactoring
+  - "documentation" - Documentation changes
+  - "test" - Test-related changes
+  - "security" - Security fixes (HIGH PRIORITY)
+  - "performance" - Performance improvements
+  - "breaking-change" - Breaking API changes (WARN in title)
+
+  AUTO-MERGE:
+  - ONLY true if: all tests pass, low risk, no breaking changes
+  - Default: false (safer)
+
+  DRAFT:
+  - true if: work in progress, needs discussion
+  - false if: ready for review (default)
+
+examples:
+  - name: "Simple enhancement"
+    input:
+      prTitle: "Add retry logic to PaymentService"
+      filesChanged: 3
+    expectedOutput:
+      draft: false
+      labels: ["enhancement", "payment"]
+      autoMerge: false
+      deleteBranchOnMerge: true
+
+  - name: "Critical security fix"
+    input:
+      prTitle: "Fix SQL injection in UserService"
+    expectedOutput:
+      draft: false
+      labels: ["security", "bug", "critical"]
+      autoMerge: false
+      reviewers: ["security-team"]
+
+  - name: "Breaking change"
+    input:
+      prTitle: "BREAKING: Change PaymentService API signature"
+    expectedOutput:
+      draft: false
+      labels: ["breaking-change", "enhancement"]
+      autoMerge: false

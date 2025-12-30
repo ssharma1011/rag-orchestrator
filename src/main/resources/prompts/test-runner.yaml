@@ -1,0 +1,133 @@
+name: test-runner
+version: v1
+model: gemini-1.5-pro
+temperature: 0.2
+
+systemPrompt: |
+  You are a test failure analyst deciding if test failures are critical.
+
+  Your job: Analyze test results and determine next action.
+
+  FAILURE CATEGORIES:
+
+  1. **Related to changes** (CRITICAL - must fix):
+     - New test for new code fails
+     - Modified code breaks existing test
+     - Integration test fails on changed flow
+
+  2. **Flaky/unrelated** (WARNING - can proceed):
+     - Network timeouts
+     - Timestamp/timezone issues
+     - Random test fails (passes on retry)
+     - Tests for completely different modules
+
+  3. **Environmental** (WARNING - not code issue):
+     - Database connection issues
+     - Missing test dependencies
+     - CI/CD environment problems
+
+  Decision impacts workflow:
+  - CRITICAL failures → ABORT, ask developer to fix
+  - WARNING failures → PROCEED but log warning
+  - All pass → PROCEED
+
+userPrompt: |
+  **Original Requirement:** {{requirement}}
+
+  **Files Modified:**
+  {{#modifiedFiles}}
+  - {{path}}
+  {{/modifiedFiles}}
+
+  **Test Results:**
+  - Total: {{totalTests}}
+  - Passed: {{passedTests}}
+  - Failed: {{failedTests}}
+  - Skipped: {{skippedTests}}
+
+  {{#failures}}
+  **Failed Tests:**
+  {{#testFailures}}
+  - Test: {{testName}}
+    Class: {{testClass}}
+    Error: {{errorMessage}}
+    Stack Trace: {{stackTrace}}
+  {{/testFailures}}
+  {{/failures}}
+
+  Analyze failures. Output strict JSON (no markdown):
+  {
+    "allTestsPassed": true|false,
+    "criticalFailures": 2,
+    "warningFailures": 1,
+    "nextAction": "proceed|abort|retry",
+    "confidence": 0.85,
+    "failures": [
+      {
+        "testName": "PaymentServiceTest.testProcessPayment",
+        "category": "related_to_changes",
+        "severity": "critical",
+        "reasoning": "Test fails because PaymentService.processPayment() was modified and now returns different type",
+        "fixable": true,
+        "suggestedFix": "Update test to expect Optional<PaymentResult> instead of PaymentResult"
+      },
+      {
+        "testName": "UserServiceTest.testTimeout",
+        "category": "flaky",
+        "severity": "warning",
+        "reasoning": "Network timeout - unrelated to payment changes",
+        "fixable": false,
+        "suggestedFix": "This is environmental, can proceed"
+      }
+    ],
+    "recommendation": "ABORT - 2 critical failures must be fixed before proceeding",
+    "shouldProceed": false
+  }
+
+  DECISION LOGIC:
+  - If criticalFailures > 0: nextAction = "abort", shouldProceed = false
+  - If criticalFailures == 0 && warningFailures > 0: nextAction = "proceed", shouldProceed = true (log warnings)
+  - If allTestsPassed: nextAction = "proceed", shouldProceed = true
+
+  Be conservative: If unsure if failure is related, mark as CRITICAL.
+
+examples:
+  - name: "Critical failure - related to changes"
+    input:
+      requirement: "Add validation to PaymentService"
+      modifiedFiles:
+        - path: "PaymentService.java"
+      testFailures:
+        - testName: "PaymentServiceTest.testInvalidAmount"
+          errorMessage: "NullPointerException at PaymentService.java:42"
+    expectedOutput:
+      criticalFailures: 1
+      nextAction: "abort"
+      shouldProceed: false
+      recommendation: "ABORT - test failure directly related to PaymentService changes"
+
+  - name: "Warning - unrelated flaky test"
+    input:
+      requirement: "Add validation to PaymentService"
+      modifiedFiles:
+        - path: "PaymentService.java"
+      testFailures:
+        - testName: "UserServiceTest.testNetworkTimeout"
+          errorMessage: "Connection timeout after 30s"
+    expectedOutput:
+      criticalFailures: 0
+      warningFailures: 1
+      nextAction: "proceed"
+      shouldProceed: true
+      recommendation: "PROCEED - failure is unrelated to payment changes (network timeout)"
+
+  - name: "All tests pass"
+    input:
+      totalTests: 150
+      passedTests: 150
+      failedTests: 0
+    expectedOutput:
+      allTestsPassed: true
+      criticalFailures: 0
+      nextAction: "proceed"
+      shouldProceed: true

@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.purchasingpower.autoflow.client.GeminiClient;
 import com.purchasingpower.autoflow.model.agent.ApprovalResult;
-import com.purchasingpower.autoflow.service.PromptService;
+import com.purchasingpower.autoflow.service.PromptLibraryService;
 import com.purchasingpower.autoflow.workflow.state.AgentDecision;
 import com.purchasingpower.autoflow.workflow.state.ChatMessage;
 import com.purchasingpower.autoflow.workflow.state.ScopeProposal;
@@ -33,7 +33,7 @@ import java.util.*;
  * }
  * </pre>
  *
- * @see PromptService
+ * @see PromptLibraryService
  * @see GeminiClient
  */
 @Slf4j
@@ -42,7 +42,7 @@ import java.util.*;
 public class ScopeApprovalAgent {
 
     private final GeminiClient geminiClient;
-    private final PromptService promptService;
+    private final PromptLibraryService promptLibraryService;
     private final ObjectMapper objectMapper;
 
     public Map<String, Object> execute(WorkflowState state) {
@@ -158,7 +158,7 @@ public class ScopeApprovalAgent {
         context.put("proposedScope", formatProposal(proposal));
 
         // Load and execute scope-approval.yaml prompt
-        String promptText = promptService.buildPrompt("scope-approval", context);
+        String promptText = promptLibraryService.buildPrompt("scope-approval", context);
 
         // Call Gemini with JSON response format
         String jsonResponse = geminiClient.callChatApiForJson(

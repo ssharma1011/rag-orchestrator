@@ -44,7 +44,7 @@ public class ConfigurableGitProviderStrategy implements GitProviderStrategy {
     }
 
     @Override
-    public GitUrlParser.ParsedGitUrl parse(String url) {
+    public ParsedGitUrl parse(String url) {
         String cleanUrl = url.replace(".git", "").trim();
         String repoUrl;
         String branch;

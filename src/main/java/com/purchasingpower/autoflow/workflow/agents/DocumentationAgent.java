@@ -73,8 +73,10 @@ public class DocumentationAgent {
             if (!relevantCode.isEmpty()) {
                 log.info("📋 Retrieved code chunks:");
                 relevantCode.stream().limit(agentConfig.getDocumentation().getMaxLogPreview()).forEach(code ->
-                    log.info("  - {} (score: {:.2f}, file: {})",
-                        code.className(), code.score(), code.filePath())
+                    log.info("  - {} (score: {}, file: {})",
+                        code.className(),
+                        String.format("%.2f", code.score()),  // ✅ FIX: Pre-format number (SLF4J doesn't support {:.2f})
+                        code.filePath())
                 );
             } else {
                 log.warn("⚠️ Pinecone returned ZERO results for query: {}", requirement);
@@ -145,7 +147,25 @@ public class DocumentationAgent {
             validateResponseQuality(explanation, relevantCode);
 
             // ================================================================
-            // STEP 3: RETURN EXPLANATION (NO CODE GENERATION!)
+            // STEP 3: ADD ASSISTANT RESPONSE TO CONVERSATION HISTORY
+            // ================================================================
+
+            // ✅ CRITICAL FIX: Add assistant's response to conversation history
+            // Without this, the conversation history only has the user's question!
+            List<ChatMessage> conversationHistory = state.getConversationHistory() != null
+                    ? new ArrayList<>(state.getConversationHistory())
+                    : new ArrayList<>();
+
+            ChatMessage assistantMessage = new ChatMessage();
+            assistantMessage.setRole("assistant");
+            assistantMessage.setContent("✅ **Documentation Generated**\n\n" + explanation);
+            assistantMessage.setTimestamp(java.time.LocalDateTime.now());
+            conversationHistory.add(assistantMessage);
+
+            updates.put("conversationHistory", conversationHistory);
+
+            // ================================================================
+            // STEP 4: RETURN EXPLANATION (NO CODE GENERATION!)
             // ================================================================
 
             updates.put("documentationResult", explanation);

@@ -1,5 +1,6 @@
 package com.purchasingpower.autoflow.workflow.agents;
 
+import com.purchasingpower.autoflow.config.AgentConfig;
 import com.purchasingpower.autoflow.model.neo4j.ClassNode;
 import com.purchasingpower.autoflow.query.HybridRetriever;
 import com.purchasingpower.autoflow.service.GitOperationsService;
@@ -26,6 +27,8 @@ public class ContextBuilderAgent {
     private final Neo4jGraphStore neo4jStore;
     private final HybridRetriever hybridRetriever;
     private final GitOperationsService gitService;
+    private final AgentConfig agentConfig;
+    private final GitUrlParser gitUrlParser;
 
     public Map<String, Object> execute(WorkflowState state) {
         log.info("🔨 Building exact context for {} files...",
@@ -34,7 +37,7 @@ public class ContextBuilderAgent {
         try {
             ScopeProposal scope = state.getScopeProposal();
             // ✅ FIX: Parse URL correctly to extract repo name (handles /tree/branch URLs)
-            String repoName = GitUrlParser.parse(state.getRepoUrl()).getRepoName();
+            String repoName = gitUrlParser.parse(state.getRepoUrl()).getRepoName();
             File workspace = state.getWorkspaceDir();
 
             StructuredContext context = buildContext(scope, repoName, workspace);
@@ -45,7 +48,7 @@ public class ContextBuilderAgent {
             log.info("✅ Context built. Confidence: {}, Files: {}",
                     context.getConfidence(), context.getFileContexts().size());
 
-            if (context.getConfidence() < 0.9) {
+            if (context.getConfidence() < agentConfig.getContextBuilder().getMinConfidence()) {
                 updates.put("lastAgentDecision", AgentDecision.askDev(
                     "⚠️ **Uncertain Context**\n\n" +
                     "I couldn't get complete context for some files.\n" +

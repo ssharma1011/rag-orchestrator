@@ -19,6 +19,7 @@ public class PRCreatorAgent {
 
     private final GitOperationsService gitService;
     private final BitbucketService bitbucketService;
+    private final GitUrlParser gitUrlParser;
 
     public Map<String, Object> execute(WorkflowState state) {
         log.info("🚀 Creating PR...");
@@ -38,7 +39,7 @@ public class PRCreatorAgent {
 
             // Create PR - FIX: Use correct parameter order
             // ✅ FIX: Parse URL correctly to extract repo name (handles /tree/branch URLs)
-            String repoName = GitUrlParser.parse(state.getRepoUrl()).getRepoName();
+            String repoName = gitUrlParser.parse(state.getRepoUrl()).getRepoName();
             String baseBranch = state.getBaseBranch() != null ? state.getBaseBranch() : "develop";
             
             String prUrl = bitbucketService.createPullRequest(

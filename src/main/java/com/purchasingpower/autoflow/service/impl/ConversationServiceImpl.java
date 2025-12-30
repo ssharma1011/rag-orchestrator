@@ -33,6 +33,7 @@ public class ConversationServiceImpl implements ConversationService {
     private final ConversationRepository conversationRepo;
     private final WorkflowRepository workflowRepo;
     private final GitOperationsService gitService;
+    private final GitUrlParser gitUrlParser;
 
     @Override
     @Transactional
@@ -45,7 +46,7 @@ public class ConversationServiceImpl implements ConversationService {
         if (repoUrl != null && !repoUrl.trim().isEmpty()) {
             try {
                 // ✅ FIX: Parse URL correctly to extract repo name (handles /tree/branch URLs)
-                repoName = GitUrlParser.parse(repoUrl).getRepoName();
+                repoName = gitUrlParser.parse(repoUrl).getRepoName();
             } catch (Exception e) {
                 log.warn("Failed to extract repo name from URL: {}", repoUrl, e);
             }

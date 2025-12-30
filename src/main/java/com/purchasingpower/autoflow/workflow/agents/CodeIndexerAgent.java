@@ -1,5 +1,6 @@
 package com.purchasingpower.autoflow.workflow.agents;
 
+import com.purchasingpower.autoflow.configuration.AppProperties;
 import com.purchasingpower.autoflow.model.neo4j.ParsedCodeGraph;
 import com.purchasingpower.autoflow.model.sync.EmbeddingSyncResult;
 import com.purchasingpower.autoflow.model.sync.SyncType;
@@ -44,6 +45,8 @@ public class CodeIndexerAgent {
     private final EntityExtractor entityExtractor;
     private final Neo4jGraphStore neo4jGraphStore;
     private final com.purchasingpower.autoflow.repository.GraphNodeRepository graphNodeRepository;
+    private final AppProperties appProperties;
+    private final GitUrlParser gitUrlParser;
 
     @Transactional
     public Map<String, Object> execute(WorkflowState state) {
@@ -53,7 +56,7 @@ public class CodeIndexerAgent {
             Map<String, Object> updates = new HashMap<>(state.toMap());
 
             // Parse Git URL to extract clean repo URL and branch
-            GitUrlParser.ParsedGitUrl parsed = GitUrlParser.parse(state.getRepoUrl());
+            GitUrlParser.ParsedGitUrl parsed = gitUrlParser.parse(state.getRepoUrl());
             String cleanRepoUrl = parsed.getRepoUrl();
             String branch = parsed.getBranch();
             String repoName = parsed.getRepoName();
@@ -455,7 +458,7 @@ public class CodeIndexerAgent {
      */
     private File getOrCloneWorkspace(String repoUrl, String branch, String repoName) {
         // Define workspace location
-        String workspaceBase = System.getProperty("user.home") + "/ai-workspace";
+        String workspaceBase = appProperties.getWorkspaceDir();
         File workspace = new File(workspaceBase, repoName);
 
         // Check if workspace exists and is valid Git repo

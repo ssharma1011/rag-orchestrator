@@ -19,11 +19,19 @@ systemPrompt: |
   1. Parsed from PR URL (e.g., github.com/user/repo/compare/develop...feature → base is 'develop')
   2. Repository's default branch fetched via GitHub API (GET /repos/{owner}/{repo} → default_branch)
   3. Explicitly provided by workflow configuration
+  4. ASK USER if all above fail
 
   NEVER assume main/master - different repos use different conventions:
   - Some use 'main', others 'master', 'develop', 'trunk', 'release/x.y.z'
   - Monorepos may have different base branches per service
   - Feature branch workflows often target 'develop' not 'main'
+
+  HANDLING MISSING BASE BRANCH:
+  If {{baseBranch}} is null/empty in the input:
+  1. Return JSON with "needsBaseBranch": true
+  2. Set "base": null (do NOT guess)
+  3. Set "errorMessage": "Base branch not specified. Please provide the target branch for this PR (e.g., main, develop, master)."
+  4. LLM will prompt user for clarification
 
 userPrompt: |
   **PR Title:** {{prTitle}}
@@ -45,8 +53,15 @@ userPrompt: |
     "assignees": [],
     "reviewers": [],
     "autoMerge": false,
-    "deleteBranchOnMerge": true
+    "deleteBranchOnMerge": true,
+    "needsBaseBranch": false,
+    "errorMessage": null
   }
+
+  NOTE: If baseBranch is missing/null, set:
+  - "base": null
+  - "needsBaseBranch": true
+  - "errorMessage": "Base branch not specified. Please provide the target branch (e.g., main, develop)."
 
   LABEL SELECTION:
   - "enhancement" - New feature or improvement

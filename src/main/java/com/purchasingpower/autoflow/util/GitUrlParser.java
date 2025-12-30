@@ -1,126 +1,103 @@
 package com.purchasingpower.autoflow.util;
 
+import com.purchasingpower.autoflow.config.GitProvidersConfig;
+import jakarta.annotation.PostConstruct;
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Utility for parsing Git provider URLs (GitHub, GitLab, Bitbucket, Azure DevOps).
+ * Utility for parsing Git provider URLs using configurable Strategy pattern.
  *
- * Handles web URLs with branch references:
- * - GitHub: https://github.com/user/repo/tree/branch
- * - GitLab: https://gitlab.com/user/repo/-/tree/branch
- * - Bitbucket: https://bitbucket.org/workspace/repo/src/branch
- * - Azure DevOps: https://dev.azure.com/org/project/_git/repo?version=GBbranch
+ * <p>Handles web URLs with branch references for multiple Git providers:
+ * <ul>
+ *   <li>GitHub: https://github.com/user/repo/tree/branch</li>
+ *   <li>GitLab: https://gitlab.com/user/repo/-/tree/branch</li>
+ *   <li>Bitbucket: https://bitbucket.org/workspace/repo/src/branch</li>
+ *   <li>Azure DevOps: https://dev.azure.com/org/project/_git/repo?version=GBbranch</li>
+ * </ul>
  *
- * Extracts:
- * - Clean git clone URL
- * - Branch name (if present)
- * - Repository name
+ * <p>Extracts:
+ * <ul>
+ *   <li>Clean git clone URL</li>
+ *   <li>Branch name (if present)</li>
+ *   <li>Repository name</li>
+ * </ul>
+ *
+ * <p><b>Design Pattern:</b> Strategy pattern with configuration-driven providers.
+ * Adding new Git providers only requires updating application.yml, no code changes needed.
+ *
+ * @author AutoFlow Pipeline
+ * @since 1.0.0
  */
 @Slf4j
+@Component
+@RequiredArgsConstructor
 public class GitUrlParser {
+    private final GitProvidersConfig gitProvidersConfig;
+    private List<GitProviderStrategy> strategies;
+
+    /**
+     * Initialize provider strategies from configuration.
+     *
+     * <p>Loads all configured Git providers from application.yml and creates
+     * a strategy for each one. This eliminates hardcoded if-else chains and
+     * makes the parser extensible.
+     */
+    @PostConstruct
+    public void initStrategies() {
+        strategies = new ArrayList<>();
+
+        // Load strategies from configuration
+        if (gitProvidersConfig.getProviders() != null) {
+            gitProvidersConfig.getProviders().forEach((name, config) -> {
+                strategies.add(new ConfigurableGitProviderStrategy(name, config));
+            });
+        }
+
+        log.info("Loaded {} Git provider strategies: {}",
+                strategies.size(),
+                gitProvidersConfig.getProviders() != null ?
+                        gitProvidersConfig.getProviders().keySet() : "[]");
+    }
 
     /**
      * Parse a Git URL (web or clone URL) and extract components.
      *
-     * @param url Input URL (can be web URL with /tree/ or clean git URL)
+     * <p>Uses Strategy pattern to delegate to the appropriate provider
+     * based on URL pattern matching.
+     *
+     * @param url Input URL (can be web URL with branch or clean git URL)
      * @return Parsed components
+     * @throws IllegalArgumentException if URL is invalid or provider unsupported
      */
-    public static ParsedGitUrl parse(String url) {
+    public ParsedGitUrl parse(String url) {
         if (url == null || url.isBlank()) {
             throw new IllegalArgumentException("URL cannot be null or blank");
         }
 
-        String cleanUrl = url.trim();
-        String repoUrl;
-        String branch = null;
-        String repoName;
+        String trimmedUrl = url.trim();
 
-        // GitHub: https://github.com/user/repo/tree/branch
-        if (cleanUrl.contains("github.com")) {
-            if (cleanUrl.contains("/tree/")) {
-                int treeIndex = cleanUrl.indexOf("/tree/");
-                repoUrl = cleanUrl.substring(0, treeIndex);
-                branch = cleanUrl.substring(treeIndex + 6); // Skip "/tree/"
-            } else {
-                repoUrl = cleanUrl.replaceAll("\\.git$", "");
-            }
-
-        // GitLab: https://gitlab.com/user/repo/-/tree/branch
-        } else if (cleanUrl.contains("gitlab.com")) {
-            if (cleanUrl.contains("/-/tree/")) {
-                int treeIndex = cleanUrl.indexOf("/-/tree/");
-                repoUrl = cleanUrl.substring(0, treeIndex);
-                branch = cleanUrl.substring(treeIndex + 8); // Skip "/-/tree/"
-            } else {
-                repoUrl = cleanUrl.replaceAll("\\.git$", "");
-            }
-
-        // Bitbucket: https://bitbucket.org/workspace/repo/src/branch
-        } else if (cleanUrl.contains("bitbucket.org")) {
-            if (cleanUrl.contains("/src/")) {
-                int srcIndex = cleanUrl.indexOf("/src/");
-                repoUrl = cleanUrl.substring(0, srcIndex);
-                branch = cleanUrl.substring(srcIndex + 5); // Skip "/src/"
-            } else {
-                repoUrl = cleanUrl.replaceAll("\\.git$", "");
-            }
-
-        // Azure DevOps: https://dev.azure.com/org/project/_git/repo?version=GBbranch
-        } else if (cleanUrl.contains("dev.azure.com") || cleanUrl.contains("visualstudio.com")) {
-            if (cleanUrl.contains("?version=GB")) {
-                int versionIndex = cleanUrl.indexOf("?version=GB");
-                repoUrl = cleanUrl.substring(0, versionIndex);
-                branch = cleanUrl.substring(versionIndex + 11); // Skip "?version=GB"
-            } else {
-                repoUrl = cleanUrl.replaceAll("\\.git$", "");
-            }
-
-        // Generic git URL (https://domain.com/user/repo.git)
-        } else {
-            repoUrl = cleanUrl.replaceAll("\\.git$", "");
-        }
-
-        // Ensure repoUrl doesn't end with .git
-        repoUrl = repoUrl.replaceAll("\\.git$", "");
-
-        // Extract repo name (last path segment)
-        repoName = extractRepoName(repoUrl);
-
-        // Default branch if not specified
-        if (branch == null || branch.isBlank()) {
-            branch = "main";
-        }
-
-        // Clean up branch (remove trailing slashes, query params)
-        branch = branch.split("[?#]")[0].replaceAll("/$", "");
+        ParsedGitUrl result = strategies.stream()
+                .filter(strategy -> strategy.matches(trimmedUrl))
+                .findFirst()
+                .map(strategy -> strategy.parse(trimmedUrl))
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Unsupported Git provider URL: " + url +
+                        ". Supported providers: " +
+                        (gitProvidersConfig.getProviders() != null ?
+                                gitProvidersConfig.getProviders().keySet() : "[]")
+                ));
 
         log.debug("Parsed Git URL: {} -> repoUrl={}, branch={}, repoName={}",
-                url, repoUrl, branch, repoName);
+                url, result.getRepoUrl(), result.getBranch(), result.getRepoName());
 
-        return new ParsedGitUrl(repoUrl, branch, repoName);
-    }
-
-    /**
-     * Extract repository name from URL.
-     * Example: "https://github.com/user/my-repo" -> "my-repo"
-     */
-    private static String extractRepoName(String repoUrl) {
-        String name = repoUrl;
-
-        // Remove .git suffix
-        if (name.endsWith(".git")) {
-            name = name.substring(0, name.length() - 4);
-        }
-
-        // Get last path segment
-        int lastSlash = name.lastIndexOf('/');
-        if (lastSlash >= 0 && lastSlash < name.length() - 1) {
-            name = name.substring(lastSlash + 1);
-        }
-
-        return name;
+        return result;
     }
 
     /**

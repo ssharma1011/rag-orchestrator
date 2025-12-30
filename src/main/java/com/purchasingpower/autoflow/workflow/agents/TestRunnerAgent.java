@@ -1,5 +1,6 @@
 package com.purchasingpower.autoflow.workflow.agents;
 
+import com.purchasingpower.autoflow.config.AgentConfig;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +17,8 @@ import java.util.Map;
 @Component
 @RequiredArgsConstructor
 public class TestRunnerAgent {
+
+    private final AgentConfig agentConfig;
 
     public Map<String, Object> execute(WorkflowState state) {
         log.info("🧪 Running tests...");
@@ -61,14 +64,14 @@ public class TestRunnerAgent {
 
         List<String> command = new ArrayList<>();
         if (isWindows) {
-            command.add("cmd.exe");
-            command.add("/c");
+            command.add(agentConfig.getTestRunner().getShellWindows());
+            command.add(agentConfig.getTestRunner().getShellFlagWindows());
         } else {
-            command.add("sh");
-            command.add("-c");
+            command.add(agentConfig.getTestRunner().getShellUnix());
+            command.add(agentConfig.getTestRunner().getShellFlagUnix());
         }
 
-        command.add("mvn -B test");
+        command.add(agentConfig.getTestRunner().getTestCommand());
 
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(state.getWorkspaceDir());

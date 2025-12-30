@@ -2,6 +2,7 @@ package com.purchasingpower.autoflow.workflow.agents;
 
 import com.purchasingpower.autoflow.client.GeminiClient;
 import com.purchasingpower.autoflow.client.PineconeRetriever;
+import com.purchasingpower.autoflow.config.AgentConfig;
 import com.purchasingpower.autoflow.model.WorkflowStatus;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
@@ -35,6 +36,8 @@ public class DocumentationAgent {
     private final PromptLibraryService promptLibrary;
     private final GitOperationsService gitService;
     private final com.purchasingpower.autoflow.repository.GraphNodeRepository graphNodeRepository;
+    private final AgentConfig agentConfig;
+    private final GitUrlParser gitUrlParser;
 
     public Map<String, Object> execute(WorkflowState state) {
         log.info("📚 Generating documentation for: {}", state.getRequirement());
@@ -55,7 +58,7 @@ public class DocumentationAgent {
             List<Double> queryEmbedding = geminiClient.createEmbedding(requirement);
 
             // ✅ FIX: Parse URL correctly to extract repo name (handles /tree/branch URLs)
-            GitUrlParser.ParsedGitUrl parsed = GitUrlParser.parse(state.getRepoUrl());
+            GitUrlParser.ParsedGitUrl parsed = gitUrlParser.parse(state.getRepoUrl());
             String repoName = parsed.getRepoName();
 
             // Search Pinecone
@@ -67,7 +70,7 @@ public class DocumentationAgent {
             // Enhanced logging: Show what code was actually retrieved
             if (!relevantCode.isEmpty()) {
                 log.info("📋 Retrieved code chunks:");
-                relevantCode.stream().limit(5).forEach(code ->
+                relevantCode.stream().limit(agentConfig.getDocumentation().getMaxLogPreview()).forEach(code ->
                     log.info("  - {} (score: {:.2f}, file: {})",
                         code.className(), code.score(), code.filePath())
                 );
@@ -88,7 +91,7 @@ public class DocumentationAgent {
                     // Convert GraphNodes to CodeContext format
                     // Take a representative sample to avoid overwhelming the LLM
                     relevantCode = graphNodes.stream()
-                            .limit(20)  // Take top 20 nodes
+                            .limit(agentConfig.getDocumentation().getMaxFallbackNodes())  // Take top N nodes
                             .map(node -> {
                                 String className = node.getSimpleName();  // ✅ Fixed: getSimpleName() not getName()
                                 String filePath = node.getFilePath() != null ? node.getFilePath() : "unknown";
@@ -181,7 +184,7 @@ public class DocumentationAgent {
 
         // Format relevant code for Mustache template
         List<Map<String, Object>> codeData = relevantCode.stream()
-                .limit(10)  // Only include top 10 matches
+                .limit(agentConfig.getDocumentation().getMaxCodeMatches())  // Only include top N matches
                 .map(code -> {
                     Map<String, Object> codeMap = new HashMap<>();
                     codeMap.put("className", code.className());

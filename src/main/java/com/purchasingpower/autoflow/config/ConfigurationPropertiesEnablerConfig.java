@@ -17,6 +17,7 @@ import org.springframework.context.annotation.Configuration;
  *   <li>{@link ScopeDiscoveryConfig} - Scope discovery agent settings
  *   <li>{@link GlobalRetryConfig} - Global retry and backoff settings
  *   <li>{@link AgentConfig} - Umbrella configuration for all agents
+ *   <li>{@link GitProvidersConfig} - Git provider URL parsing strategies
  * </ul>
  *
  * <p><b>Note:</b> ScopeApprovalAgent uses LLM-based natural language understanding
@@ -43,7 +44,8 @@ import org.springframework.context.annotation.Configuration;
     GeminiConfig.class,
     ScopeDiscoveryConfig.class,
     GlobalRetryConfig.class,
-    AgentConfig.class
+    AgentConfig.class,
+    GitProvidersConfig.class
 })
 public class ConfigurationPropertiesEnablerConfig {
     // Spring automatically instantiates and manages the configuration classes

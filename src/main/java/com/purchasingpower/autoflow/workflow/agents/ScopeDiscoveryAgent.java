@@ -3,6 +3,7 @@ package com.purchasingpower.autoflow.workflow.agents;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.purchasingpower.autoflow.client.GeminiClient;
 import com.purchasingpower.autoflow.client.PineconeRetriever;
+import com.purchasingpower.autoflow.config.ScopeDiscoveryConfig;
 import com.purchasingpower.autoflow.model.graph.GraphNode;
 import com.purchasingpower.autoflow.repository.GraphNodeRepository;
 import com.purchasingpower.autoflow.service.GitOperationsService;
@@ -21,8 +22,7 @@ import java.util.*;
 @RequiredArgsConstructor
 public class ScopeDiscoveryAgent {
 
-    private static final int MAX_FILES = 7;
-
+    private final ScopeDiscoveryConfig config;
     private final GraphNodeRepository graphRepo;
     private final GraphTraversalService graphTraversal;
     private final PineconeRetriever pineconeRetriever;
@@ -30,13 +30,14 @@ public class ScopeDiscoveryAgent {
     private final PromptLibraryService promptLibrary;
     private final ObjectMapper objectMapper;
     private final GitOperationsService gitService;
+    private final GitUrlParser gitUrlParser;
 
     public Map<String, Object> execute(WorkflowState state) {
         log.info("🔍 Discovering scope for: {}", state.getRequirement());
 
         RequirementAnalysis req = state.getRequirementAnalysis();
         // ✅ FIX: Parse URL correctly to extract repo name (handles /tree/branch URLs)
-        String repoName = GitUrlParser.parse(state.getRepoUrl()).getRepoName();
+        String repoName = gitUrlParser.parse(state.getRepoUrl()).getRepoName();
 
         try {
             List<GraphNode> candidates = findCandidateClasses(req, repoName);
@@ -54,14 +55,14 @@ public class ScopeDiscoveryAgent {
             }
 
             ScopeProposal proposal = analyzeScope(req, candidates, repoName);
-            
+
             Map<String, Object> updates = new HashMap<>(state.toMap());
             updates.put("scopeProposal", proposal);
 
             int totalFiles = proposal.getTotalFileCount();
-            if (totalFiles > MAX_FILES) {
+            if (totalFiles > config.getMaxFiles()) {
                 updates.put("lastAgentDecision", AgentDecision.askDev(
-                    "⚠️ **Scope Too Large**\nProposed " + totalFiles + " files. Limit is " + MAX_FILES + "."
+                    "⚠️ **Scope Too Large**\nProposed " + totalFiles + " files. Limit is " + config.getMaxFiles() + "."
                 ));
                 return updates;
             }
@@ -146,8 +147,8 @@ public class ScopeDiscoveryAgent {
 
         // CRITICAL FILTER: Use adaptive threshold based on score distribution
         // This prevents irrelevant classes while adapting to different codebases
-        final int MAX_CLASSES = 3;  // Limit to top 3 most relevant classes
-        final int MAX_CHUNKS = 10;   // Process max 10 chunks
+        final int MAX_CLASSES = config.getMaxClasses();  // Limit to top 3 most relevant classes
+        final int MAX_CHUNKS = config.getMaxChunks();   // Process max 10 chunks
 
         // Calculate adaptive threshold using score gap analysis
         double adaptiveThreshold = calculateAdaptiveThreshold(semanticMatches);
@@ -290,7 +291,7 @@ public class ScopeDiscoveryAgent {
                                 int lastDot = depId.lastIndexOf('.');
                                 return lastDot >= 0 ? depId.substring(lastDot + 1) : depId;
                             })
-                            .limit(5)  // Limit to top 5 for readability
+                            .limit(config.getMaxDependencies())  // Limit to top 5 for readability
                             .toList();
                     data.put("dependencies", dependencies.isEmpty() ? "None" : String.join(", ", dependencies));
 
@@ -517,15 +518,15 @@ public class ScopeDiscoveryAgent {
             return 0.5; // Default minimum
         }
 
-        final double MIN_THRESHOLD = 0.5;  // Never go below 50% similarity
-        final double MAX_THRESHOLD = 0.8;  // Never be stricter than 80%
-        final int MIN_MATCHES = 3;          // Always consider at least top 3
-        final double SIGNIFICANT_GAP = 0.15; // Gap of 15% is significant
+        final double MIN_THRESHOLD = config.getSimilarity().getMinThreshold();  // Never go below 50% similarity
+        final double MAX_THRESHOLD = config.getSimilarity().getMaxThreshold();  // Never be stricter than 80%
+        final int MIN_MATCHES = config.getSimilarity().getMinMatches();          // Always consider at least top 3
+        final double SIGNIFICANT_GAP = config.getSimilarity().getSignificantGap(); // Gap of 15% is significant
 
         // If we have very few matches, just use minimum threshold
         if (matches.size() <= MIN_MATCHES) {
             double topScore = matches.get(0).score();
-            return Math.max(MIN_THRESHOLD, topScore * 0.7); // 70% of top score
+            return Math.max(MIN_THRESHOLD, topScore * config.getSimilarity().getTopScoreMultiplier()); // 70% of top score
         }
 
         // Find the largest score gap in top 10 matches
@@ -550,7 +551,7 @@ public class ScopeDiscoveryAgent {
         } else {
             // No significant gap - use relative threshold (70% of top score)
             double topScore = matches.get(0).score();
-            threshold = topScore * 0.7;
+            threshold = topScore * config.getSimilarity().getTopScoreMultiplier();
             log.debug("   📊 No significant gap found, using 70% of top score ({:.3f})", topScore);
         }
 

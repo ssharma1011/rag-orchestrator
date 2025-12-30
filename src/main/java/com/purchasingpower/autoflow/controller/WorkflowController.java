@@ -59,6 +59,24 @@ public class WorkflowController {
                         .body(WorkflowResponse.error("Requirement is required. Please describe what you want to build or fix."));
             }
 
+            // ✅ FIX: Initialize conversation history with user's initial message
+            // This was the root cause - conversationHistory started empty!
+            List<ChatMessage> initialHistory = new ArrayList<>();
+            ChatMessage userMessage = new ChatMessage();
+            userMessage.setRole("user");
+            userMessage.setContent(request.getRequirement());
+            userMessage.setTimestamp(LocalDateTime.now());
+            initialHistory.add(userMessage);
+
+            // Add logs if provided
+            if (request.getLogsPasted() != null && !request.getLogsPasted().trim().isEmpty()) {
+                ChatMessage logsMessage = new ChatMessage();
+                logsMessage.setRole("user");
+                logsMessage.setContent("Logs:\n" + request.getLogsPasted());
+                logsMessage.setTimestamp(LocalDateTime.now());
+                initialHistory.add(logsMessage);
+            }
+
             WorkflowState initialState = WorkflowState.builder()
                     .requirement(request.getRequirement())
                     .repoUrl(request.getRepoUrl())
@@ -68,8 +86,13 @@ public class WorkflowController {
                     .userId(request.getUserId())
                     .build();
 
+            // Add conversation history to state (can't use builder for lists)
+            Map<String, Object> stateData = new HashMap<>(initialState.toMap());
+            stateData.put("conversationHistory", initialHistory);
+            WorkflowState stateWithHistory = WorkflowState.fromMap(stateData);
+
             // Start workflow asynchronously - returns immediately
-            WorkflowState runningState = workflowService.startWorkflow(initialState);
+            WorkflowState runningState = workflowService.startWorkflow(stateWithHistory);
 
             // Return 202 Accepted with friendly initial message
             // Override the message for initial response (workflow continues in background)

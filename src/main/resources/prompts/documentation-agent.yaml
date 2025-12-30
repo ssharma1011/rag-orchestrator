@@ -71,7 +71,7 @@ userPrompt: |
   This means either:
   1. The repository hasn't been indexed yet
   2. No code matches your search terms
-  3. Pinecone/Oracle query returned 0 results
+  3. Neo4j/Oracle query returned 0 results
   {{/relevantCode}}
 
   ---

@@ -97,12 +97,6 @@ app:
       multiplier: 2.0
       retryable-status-codes: [429, 500, 502, 503, 504]
 
-  pinecone:
-    api-key: ${PINECONE_KEY}
-    index-name: ${PINECONE_INDEX}
-    top-k: 20  # Number of similar vectors to retrieve
-    similarity-threshold: 0.7  # Minimum similarity score
-
   # ==============================================================
   # CODE QUALITY & GENERATION SETTINGS
   # ==============================================================

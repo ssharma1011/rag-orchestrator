@@ -98,7 +98,7 @@ public class Neo4jGraphStore {
 
     public void storeCodeGraph(ParsedCodeGraph graph) {
         var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
-                com.purchasingpower.autoflow.util.ServiceType.NEO4J,
+                com.purchasingpower.autoflow.model.ServiceType.NEO4J,
                 "StoreCodeGraph",
                 log
         );

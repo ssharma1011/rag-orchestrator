@@ -177,7 +177,7 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
         // Retry up to 3 times with exponential backoff (2s, 4s, 8s) for SERVER ERRORS ONLY
         for (int attempt = 1; attempt <= 3; attempt++) {
             var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
-                    com.purchasingpower.autoflow.util.ServiceType.PINECONE,
+                    com.purchasingpower.autoflow.model.ServiceType.PINECONE,
                     "FetchMetadata",
                     log
             );
@@ -470,7 +470,7 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
      */
     private void deleteAllVectorsForRepo(String repoName) {
         var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
-                com.purchasingpower.autoflow.util.ServiceType.PINECONE,
+                com.purchasingpower.autoflow.model.ServiceType.PINECONE,
                 "DeleteByFilter",
                 log
         );
@@ -536,7 +536,7 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
      */
     private int deleteVectorsForFile(String repoName, String filePath) {
         var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
-                com.purchasingpower.autoflow.util.ServiceType.PINECONE,
+                com.purchasingpower.autoflow.model.ServiceType.PINECONE,
                 "DeleteByFilter",
                 log
         );
@@ -654,7 +654,7 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
             int batchNum = (i / batchSize) + 1;
 
             var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
-                    com.purchasingpower.autoflow.util.ServiceType.PINECONE,
+                    com.purchasingpower.autoflow.model.ServiceType.PINECONE,
                     "Upsert",
                     log
             );
@@ -685,7 +685,7 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
 
         // Upsert metadata vector
         var upsertCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
-                com.purchasingpower.autoflow.util.ServiceType.PINECONE,
+                com.purchasingpower.autoflow.model.ServiceType.PINECONE,
                 "UpsertMetadata",
                 log
         );
@@ -727,7 +727,7 @@ public class IncrementalEmbeddingSyncServiceImpl implements IncrementalEmbedding
             Thread.sleep(1000); // Wait 1 second for Pinecone to process
 
             var verifyCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
-                    com.purchasingpower.autoflow.util.ServiceType.PINECONE,
+                    com.purchasingpower.autoflow.model.ServiceType.PINECONE,
                     "VerifyMetadata",
                     log
             );

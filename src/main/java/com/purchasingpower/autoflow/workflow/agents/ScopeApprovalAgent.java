@@ -54,7 +54,7 @@ public class ScopeApprovalAgent {
         ScopeProposal proposal = state.getScopeProposal();
         if (proposal == null) {
             log.warn("⚠️ No scope proposal found in state - skipping approval validation");
-            updates.put("lastAgentDecision", AgentDecision.proceed());
+            updates.put("lastAgentDecision", AgentDecision.proceed("No scope proposal to validate"));
             return updates;
         }
 
@@ -97,7 +97,7 @@ public class ScopeApprovalAgent {
 
             if (result.isApproved() && "full".equals(result.getApprovalType())) {
                 log.info("✅ Full approval - proceeding to context builder");
-                updates.put("lastAgentDecision", AgentDecision.proceed());
+                updates.put("lastAgentDecision", AgentDecision.proceed("User approved scope fully"));
 
             } else if (result.isApproved() && "partial".equals(result.getApprovalType())) {
                 log.info("🔧 Partial approval with modifications requested");
@@ -158,10 +158,10 @@ public class ScopeApprovalAgent {
         context.put("proposedScope", formatProposal(proposal));
 
         // Load and execute scope-approval.yaml prompt
-        String promptText = promptLibraryService.buildPrompt("scope-approval", context);
+        String promptText = promptLibraryService.render("scope-approval", context);
 
         // Call Gemini with JSON response format
-        String jsonResponse = geminiClient.callChatApiForJson(
+        String jsonResponse = geminiClient.generateJson(
             promptText,
             "scope-approval",
             conversationId
@@ -206,10 +206,10 @@ public class ScopeApprovalAgent {
                 sb.append("- ").append(f).append("\n")
             );
         }
-        sb.append("\n**Dependencies:**\n");
-        if (proposal.getDependencies() != null) {
-            proposal.getDependencies().forEach(d ->
-                sb.append("- ").append(d).append("\n")
+        sb.append("\n**Tests to update:**\n");
+        if (proposal.getTestsToUpdate() != null) {
+            proposal.getTestsToUpdate().forEach(t ->
+                sb.append("- ").append(t).append("\n")
             );
         }
         return sb.toString();

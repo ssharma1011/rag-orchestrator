@@ -73,7 +73,7 @@ public class WorkflowController {
                     .body(WorkflowResponse.builder()
                             .success(true)
                             .conversationId(runningState.getConversationId())
-                            .status(runningState.getWorkflowStatus())
+                            .status(runningState.getWorkflowStatus().name())
                             .currentAgent(runningState.getCurrentAgent())
                             .message("🚀 **Working on your request...**\n\nI'm analyzing your requirements and will update you shortly.")
                             .awaitingUserInput(false)
@@ -171,7 +171,7 @@ public class WorkflowController {
             WorkflowHistoryResponse history = WorkflowHistoryResponse.builder()
                     .conversationId(conversationId)
                     .messages(state.getConversationHistory())
-                    .status(state.getWorkflowStatus())
+                    .status(state.getWorkflowStatus().name())
                     .build();
 
             return ResponseEntity.ok(history);

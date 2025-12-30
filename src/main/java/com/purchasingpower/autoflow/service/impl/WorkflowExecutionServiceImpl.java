@@ -196,9 +196,9 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
             // ✅ FIX CRITICAL #2: Remove completed workflows from cache to prevent memory leak
             // BEFORE: activeWorkflows.put() → workflows never removed → OOM after 10k workflows
             // AFTER: Remove from cache when workflow terminates (COMPLETED, FAILED, CANCELLED)
-            String finalStatus = result.getWorkflowStatus();
-            if ("COMPLETED".equals(finalStatus) || "FAILED".equals(finalStatus) ||
-                "CANCELLED".equals(finalStatus)) {
+            WorkflowStatus finalStatus = result.getWorkflowStatus();
+            if (finalStatus == WorkflowStatus.COMPLETED || finalStatus == WorkflowStatus.FAILED ||
+                finalStatus == WorkflowStatus.CANCELLED) {
                 activeWorkflows.remove(result.getConversationId());
                 log.debug("Removed completed workflow from cache: {}", result.getConversationId());
             } else {
@@ -273,7 +273,7 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
             // Update entity
             entity.setConversationId(state.getConversationId());
             entity.setUserId(state.getUserId());
-            entity.setStatus(state.getWorkflowStatus());
+            entity.setStatus(state.getWorkflowStatus().name());
             entity.setCurrentAgent(state.getCurrentAgent());
             entity.setStateJson(stateJson);
 

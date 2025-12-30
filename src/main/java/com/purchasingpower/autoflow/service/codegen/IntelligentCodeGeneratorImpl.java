@@ -90,7 +90,7 @@ public class IntelligentCodeGeneratorImpl implements IntelligentCodeGenerator {
         }
 
         // All attempts exhausted
-        throw new CodeGenerationException(
+        throw new RuntimeException(
                 String.format("Failed to generate compilable code after %d attempts", request.getMaxAttempts())
         );
     }

@@ -259,11 +259,7 @@ public class GeminiClient {
         try {
             String json = geminiWebClient.post().uri(url).bodyValue(body)
                     .retrieve().bodyToMono(String.class)
-                    .retryWhen(buildRetrySpec()
-                            .doBeforeRetry(signal -> {
-                                log.warn("⚠️ Retrying (attempt {})", signal.totalRetries() + 1);
-                                metrics.setRetryCount((int) signal.totalRetries() + 1);
-                            }))
+                    .retryWhen(buildRetrySpec())
                     .block();
 
             long latency = System.currentTimeMillis() - startTime;

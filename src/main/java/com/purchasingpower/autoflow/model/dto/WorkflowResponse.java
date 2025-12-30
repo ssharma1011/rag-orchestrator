@@ -40,7 +40,7 @@ public class WorkflowResponse {
             return WorkflowResponse.builder()
                     .success(true)
                     .conversationId(state.getConversationId())
-                    .status(state.getWorkflowStatus())
+                    .status(state.getWorkflowStatus().name())
                     .currentAgent(state.getCurrentAgent())
                     .message(decision != null ? decision.getMessage() : null)
                     .awaitingUserInput(decision != null && 
@@ -53,7 +53,7 @@ public class WorkflowResponse {
             return WorkflowResponse.builder()
                     .success(true)
                     .conversationId(state.getConversationId())
-                    .status(state.getWorkflowStatus())
+                    .status(state.getWorkflowStatus().name())
                     .currentAgent(state.getCurrentAgent())
                     .message("Workflow in progress")
                     .awaitingUserInput(false)

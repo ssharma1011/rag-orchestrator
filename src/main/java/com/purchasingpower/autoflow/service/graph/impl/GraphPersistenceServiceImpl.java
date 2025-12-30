@@ -55,7 +55,7 @@ public class GraphPersistenceServiceImpl implements GraphPersistenceService {
 
             // Step 3: Delete old data for this repo (idempotent update)
             var deleteCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
-                    com.purchasingpower.autoflow.util.ServiceType.NEO4J,
+                    com.purchasingpower.autoflow.model.ServiceType.NEO4J,
                     "DeleteByRepo",
                     log
             );
@@ -75,7 +75,7 @@ public class GraphPersistenceServiceImpl implements GraphPersistenceService {
 
             // Step 4: Bulk insert nodes
             var nodeCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
-                    com.purchasingpower.autoflow.util.ServiceType.NEO4J,
+                    com.purchasingpower.autoflow.model.ServiceType.NEO4J,
                     "InsertNodes",
                     log
             );
@@ -93,7 +93,7 @@ public class GraphPersistenceServiceImpl implements GraphPersistenceService {
 
             // Step 5: Bulk insert edges
             var edgeCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
-                    com.purchasingpower.autoflow.util.ServiceType.NEO4J,
+                    com.purchasingpower.autoflow.model.ServiceType.NEO4J,
                     "InsertEdges",
                     log
             );

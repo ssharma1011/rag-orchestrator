@@ -37,7 +37,6 @@ import java.util.Map;
  * @author AutoFlow Pipeline
  * @since 1.0.0
  */
-@Component
 @ConfigurationProperties(prefix = "app.gemini")
 @Data
 public class GeminiConfig {

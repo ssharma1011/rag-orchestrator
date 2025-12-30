@@ -33,7 +33,6 @@ import java.util.Map;
  * @author AutoFlow Pipeline
  * @since 1.0.0
  */
-@Component
 @ConfigurationProperties("app.git")
 @Data
 public class GitProvidersConfig {

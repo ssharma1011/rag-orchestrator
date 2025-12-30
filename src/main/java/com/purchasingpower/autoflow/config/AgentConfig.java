@@ -47,7 +47,6 @@ import org.springframework.stereotype.Component;
  * @author AutoFlow Pipeline
  * @since 1.0.0
  */
-@Component
 @ConfigurationProperties(prefix = "app.agents")
 @Data
 public class AgentConfig {

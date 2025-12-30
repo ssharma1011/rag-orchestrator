@@ -32,8 +32,6 @@ An **autonomous AI agent system** that:
 
 # API Keys
 export GEMINI_KEY=your-gemini-api-key
-export PINECONE_KEY=your-pinecone-api-key
-export PINECONE_INDEX=your-index-name
 export NEO4J_URI=bolt://localhost:7687
 export NEO4J_USER=neo4j
 export NEO4J_PASSWORD=password
@@ -82,7 +80,7 @@ curl -X POST http://localhost:8080/api/chat \
 
 **What Happens:**
 1. **RequirementAnalyzer** classifies intent (code generation)
-2. **ScopeDiscovery** finds `PaymentService.java` using Pinecone + Neo4j
+2. **ScopeDiscovery** finds `PaymentService.java` using Neo4j graph queries
 3. **ScopeApproval** asks for confirmation (LLM-based NLU)
 4. **ContextBuilder** retrieves relevant code (10k token budget)
 5. **CodeGenerator** generates code with compilation loop
@@ -128,7 +126,7 @@ User Input → RequirementAnalyzer → LogAnalyzer → ScopeDiscovery
     ↓
 [User Approval Gate] ← ScopeApproval (LLM-based NLU)
     ↓
-ContextBuilder (RAG: Pinecone + Neo4j)
+ContextBuilder (RAG: Neo4j graph queries)
     ↓
 CodeGenerator (LLM + Compilation Loop)
     ↓
@@ -140,8 +138,7 @@ ReadmeGenerator → PRCreator → GitHub PR ✅
 ### **Tech Stack**
 
 - **LLM:** Google Gemini 1.5 Flash (Phase 3: Claude, OpenAI support)
-- **Vector DB:** Pinecone (semantic code search)
-- **Graph DB:** Neo4j (dependency tracking)
+- **Graph DB:** Neo4j (code search + dependency tracking)
 - **Framework:** Spring Boot 3.2.3
 - **Workflow:** LangGraph4j
 
@@ -183,7 +180,7 @@ app:
 ### **Phase 1: Single-Repo Foundation** ✅ **COMPLETE**
 
 - 13-agent workflow orchestration
-- Pinecone + Neo4j RAG
+- Neo4j graph-based RAG (replaced Pinecone)
 - LLM-based natural language understanding
 - Compilation-in-the-loop code generation
 - Configuration-driven architecture
@@ -225,7 +222,6 @@ rag-orchestrator/
 │   │   └── ...
 │   ├── client/                   # External API clients
 │   │   ├── GeminiClient.java
-│   │   ├── PineconeRetriever.java
 │   │   └── ...
 │   ├── config/                   # Configuration classes
 │   │   ├── GeminiConfig.java
@@ -338,17 +334,6 @@ curl http://localhost:7474
 # Verify credentials
 export NEO4J_USER=neo4j
 export NEO4J_PASSWORD=your-password
-```
-
-### **Pinecone Rate Limits**
-
-```yaml
-# Increase retry backoff in application.yml
-app:
-  gemini:
-    retry:
-      max-attempts: 5
-      initial-backoff-seconds: 5
 ```
 
 ---

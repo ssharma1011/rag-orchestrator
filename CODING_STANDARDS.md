@@ -10,7 +10,7 @@ These standards ensure AI-generated code is maintainable, readable, and debuggab
 ```
 com.purchasingpower.autoflow/
 ├── agent/               # All workflow agents (interface + impl)
-├── client/              # External API clients (Gemini, Pinecone)
+├── client/              # External API clients (Gemini)
 ├── config/              # Spring configuration classes
 ├── exception/           # Custom exceptions (specific, not generic)
 ├── model/               # Data models (DTOs, entities)

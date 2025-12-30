@@ -27,8 +27,7 @@ An enterprise-grade **autonomous code generation and maintenance platform** that
 - **Retrieval-Augmented Generation (RAG)** for code understanding
 - **Multi-agent workflow orchestration** for complex tasks
 - **LLM-based natural language understanding** for developer interaction
-- **Graph-based code analysis** (Neo4j) for dependency tracking
-- **Vector search** (Pinecone) for semantic code retrieval
+- **Graph-based code analysis** (Neo4j) for code search and dependency tracking
 
 ### **Why Does It Matter?**
 
@@ -67,7 +66,7 @@ RequirementAnalyzer (LLM classifies: code_generation, bug_fix, documentation, re
     ↓
 LogAnalyzer → ScopeDiscovery → ScopeApproval (LLM-based NLU)
     ↓                              ↓
-[User Approval Required]    ContextBuilder (RAG: Pinecone + Neo4j)
+[User Approval Required]    ContextBuilder (RAG: Neo4j)
     ↓
 CodeGenerator (LLM + Compilation-in-the-loop)
     ↓
@@ -88,7 +87,7 @@ GitHub PR Created ✅
 |-------|---------|------|------------|
 | **RequirementAnalyzer** | Classify user intent | ✅ | `agents.requirement-analyzer` |
 | **LogAnalyzer** | Extract error context | ✅ | - |
-| **ScopeDiscovery** | Find relevant files (Pinecone + Neo4j) | ✅ | `agents.scope-discovery` |
+| **ScopeDiscovery** | Find relevant files (Neo4j) | ✅ | `agents.scope-discovery` |
 | **ScopeApproval** | Validate user approval (NLU) | ✅ | *LLM-based (no hardcoded keywords)* |
 | **ContextBuilder** | Build 10k token context | ✅ | `agents.context-builder` |
 | **CodeGenerator** | Generate code with compilation loop | ✅ | `gemini.agent-temperatures.code-generator` |
@@ -98,26 +97,26 @@ GitHub PR Created ✅
 | **ReadmeGenerator** | Create PR description | ✅ | - |
 | **PRCreator** | Prepare PR metadata | ✅ | - |
 | **DocumentationAgent** | Explain codebase | ✅ | `agents.documentation` |
-| **CodeIndexer** | Index repo to Pinecone + Neo4j | ⚙️ | - |
+| **CodeIndexer** | Index repo to Neo4j | ⚙️ | - |
 
 **✅ = LLM-powered | ⚙️ = Rule-based**
 
 ### **Data Flow**
 
 ```
-┌─────────────┐      ┌─────────────┐      ┌─────────────┐
-│   Pinecone  │      │    Neo4j    │      │   Gemini    │
-│  (Vectors)  │◄────►│   (Graph)   │◄────►│    (LLM)    │
-└─────────────┘      └─────────────┘      └─────────────┘
-      ▲                     ▲                     ▲
-      │                     │                     │
-      └─────────────────────┴─────────────────────┘
-                            │
-                    ┌───────▼────────┐
-                    │  RAG Context   │
-                    │  (10k tokens)  │
-                    └───────┬────────┘
-                            │
+       ┌─────────────┐      ┌─────────────┐
+       │    Neo4j    │      │   Gemini    │
+       │   (Graph)   │◄────►│    (LLM)    │
+       └─────────────┘      └─────────────┘
+             ▲                     ▲
+             │                     │
+             └───────────┬─────────┘
+                         │
+                 ┌───────▼────────┐
+                 │  RAG Context   │
+                 │  (10k tokens)  │
+                 └───────┬────────┘
+                         │
                     ┌───────▼────────┐
                     │ Code Generator │
                     └────────────────┘
@@ -456,7 +455,7 @@ app:
 
 **Deliverables:**
 - ✅ 13-agent workflow orchestration
-- ✅ Pinecone vector search + Neo4j graph
+- ✅ Neo4j graph-based code retrieval (replaced Pinecone)
 - ✅ LLM-based natural language understanding
 - ✅ Compilation-in-the-loop code generation
 - ✅ Configuration-driven architecture (150+ externalized values)
@@ -697,8 +696,7 @@ BatchOperationResult result = batchExecutor.execute(operation);
 |-----------|-----------|---------|
 | **Framework** | Spring Boot 3.2.3 | Dependency injection, REST APIs |
 | **LLM** | Google Gemini 1.5 Flash | Code generation, NLU |
-| **Vector DB** | Pinecone | Semantic code search |
-| **Graph DB** | Neo4j | Dependency tracking, cross-repo analysis |
+| **Graph DB** | Neo4j | Code search, dependency tracking, cross-repo analysis |
 | **Relational DB** | Oracle | Conversation history, audit logs |
 | **Workflow** | LangGraph4j | Agent orchestration |
 | **Build** | Maven | Compilation, dependency management |

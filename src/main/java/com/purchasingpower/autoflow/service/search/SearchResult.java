@@ -17,6 +17,11 @@ import java.util.List;
 public class SearchResult {
 
     /**
+     * Original search query.
+     */
+    String query;
+
+    /**
      * Synthesized answer from search results.
      *
      * <p>This is the text that will be fed to the LLM
@@ -50,6 +55,7 @@ public class SearchResult {
      */
     public static SearchResult empty() {
         return SearchResult.builder()
+                .query("")
                 .answer("No results found")
                 .confidence(0)
                 .searchTimeMs(0)

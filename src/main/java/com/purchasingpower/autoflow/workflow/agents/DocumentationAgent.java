@@ -6,8 +6,11 @@ import com.purchasingpower.autoflow.config.AgentConfig;
 import com.purchasingpower.autoflow.model.WorkflowStatus;
 import com.purchasingpower.autoflow.model.git.ParsedGitUrl;
 import com.purchasingpower.autoflow.model.retrieval.CodeContext;
+import com.purchasingpower.autoflow.model.retrieval.RetrievalPlan;
+import com.purchasingpower.autoflow.service.DynamicRetrievalExecutor;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
+import com.purchasingpower.autoflow.service.RetrievalPlanner;
 import com.purchasingpower.autoflow.util.GitUrlParser;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +29,9 @@ import java.util.stream.Collectors;
  * - "How does authentication work?"
  * - "What design patterns are used?"
  *
+ * ✅ NEW: Uses LLM-driven dynamic retrieval planning instead of hardcoded strategies.
+ * The LLM analyzes the question and generates a custom retrieval plan.
+ *
  * Uses externalized prompt from: prompts/documentation-agent.yaml
  */
 @Slf4j
@@ -41,6 +47,10 @@ public class DocumentationAgent {
     private final AgentConfig agentConfig;
     private final GitUrlParser gitUrlParser;
 
+    // ✅ NEW: Dynamic retrieval components
+    private final RetrievalPlanner retrievalPlanner;
+    private final DynamicRetrievalExecutor retrievalExecutor;
+
     public Map<String, Object> execute(WorkflowState state) {
         log.info("📚 Generating documentation for: {}", state.getRequirement());
 
@@ -50,24 +60,33 @@ public class DocumentationAgent {
             String requirement = state.getRequirement();
             RequirementAnalysis analysis = state.getRequirementAnalysis();
 
-            // ================================================================
-            // STEP 1: FIND RELEVANT CODE USING RAG
-            // ================================================================
-
-            log.info("🔍 Searching for relevant code...");
-
-            // Create embedding for the question
-            List<Double> queryEmbedding = geminiClient.createEmbedding(requirement);
-
             // ✅ FIX: Parse URL correctly to extract repo name (handles /tree/branch URLs)
             ParsedGitUrl parsed = gitUrlParser.parse(state.getRepoUrl());
             String repoName = parsed.getRepoName();
 
-            // Search Pinecone
-            List<CodeContext> relevantCode =
-                    pineconeRetriever.findRelevantCodeStructured(queryEmbedding, repoName);
+            // ================================================================
+            // STEP 1: GENERATE DYNAMIC RETRIEVAL PLAN
+            // ================================================================
 
-            log.info("Found {} relevant code chunks from Pinecone", relevantCode.size());
+            log.info("🧠 Planning retrieval strategy...");
+
+            // LLM analyzes the question and generates a custom retrieval plan
+            // No more hardcoded "if broad_overview then do X" logic!
+            RetrievalPlan retrievalPlan = retrievalPlanner.planRetrieval(
+                requirement,
+                analysis,
+                repoName
+            );
+
+            // ================================================================
+            // STEP 2: EXECUTE RETRIEVAL PLAN
+            // ================================================================
+
+            log.info("🔍 Executing retrieval plan...");
+
+            List<CodeContext> relevantCode = retrievalExecutor.execute(retrievalPlan);
+
+            log.info("Found {} relevant code chunks", relevantCode.size());
 
             // Enhanced logging: Show what code was actually retrieved
             if (!relevantCode.isEmpty()) {
@@ -128,7 +147,7 @@ public class DocumentationAgent {
             }
 
             // ================================================================
-            // STEP 2: GENERATE EXPLANATION USING LLM
+            // STEP 3: GENERATE EXPLANATION USING LLM
             // ================================================================
 
             log.info("🤖 Generating explanation...");
@@ -147,7 +166,7 @@ public class DocumentationAgent {
             validateResponseQuality(explanation, relevantCode);
 
             // ================================================================
-            // STEP 3: ADD ASSISTANT RESPONSE TO CONVERSATION HISTORY
+            // STEP 4: ADD ASSISTANT RESPONSE TO CONVERSATION HISTORY
             // ================================================================
 
             // ✅ CRITICAL FIX: Add assistant's response to conversation history
@@ -165,10 +184,11 @@ public class DocumentationAgent {
             updates.put("conversationHistory", conversationHistory);
 
             // ================================================================
-            // STEP 4: RETURN EXPLANATION (NO CODE GENERATION!)
+            // STEP 5: RETURN EXPLANATION (NO CODE GENERATION!)
             // ================================================================
 
             updates.put("documentationResult", explanation);
+            updates.put("retrievalPlan", retrievalPlan);  // Save for debugging/explainability
             updates.put("lastAgentDecision", AgentDecision.endSuccess(
                     "✅ **Documentation Generated**\n\n" + explanation
             ));

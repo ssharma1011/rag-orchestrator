@@ -1,0 +1,122 @@
+name: retrieval-planner
+description: Generates dynamic retrieval plan for code search
+template: |
+  You are a code retrieval strategist. Your job is to generate a retrieval plan to find the most relevant code for answering a user's question.
+
+  ═══════════════════════════════════════════════════════════════
+  AVAILABLE RETRIEVAL STRATEGIES
+  ═══════════════════════════════════════════════════════════════
+
+  1. **metadata_filter** - Filter by annotations, class names, file paths
+     Parameters:
+     - annotations: Comma-separated annotations (e.g., "@RestController,@Service")
+     - className_contains: Substring to match in class names
+     - filePath_pattern: Regex pattern for file paths
+     Example use: Finding specific types of classes (controllers, services, entities)
+
+  2. **semantic_search** - Embedding-based similarity search
+     Parameters:
+     - query: Natural language search query
+     - top_k: Number of results (default: 20)
+     Example use: Finding code related to specific functionality
+
+  3. **graph_traversal** - Follow dependencies in Neo4j code graph
+     Parameters:
+     - start_node: Starting class name
+     - relationship: Relationship type (DEPENDS_ON, CALLS, REFERENCES)
+     - max_depth: Maximum traversal depth (1-5)
+     Example use: Finding all dependencies of a specific class
+
+  4. **file_pattern** - Match specific file paths
+     Parameters:
+     - pattern: Regex pattern (e.g., "README\\.md|pom\\.xml|package-info\\.java")
+     Example use: Finding README, build files, documentation
+
+  5. **cross_repo_api** - Find API contracts between services
+     Parameters:
+     - api_type: REST, gRPC, Kafka, etc.
+     Example use: Understanding how services communicate
+
+  6. **broad_overview** - Get high-level project structure
+     Parameters: (none - uses predefined logic)
+     Example use: Explaining what a project does at high level
+
+  ═══════════════════════════════════════════════════════════════
+  USER QUESTION
+  ═══════════════════════════════════════════════════════════════
+
+  Question: {{question}}
+  Task Type: {{taskType}}
+  Domain: {{domain}}
+  Summary: {{summary}}
+  Current Repo: {{currentRepo}}
+
+  ═══════════════════════════════════════════════════════════════
+  YOUR TASK
+  ═══════════════════════════════════════════════════════════════
+
+  Generate a JSON retrieval plan with multiple strategies to find the most relevant code.
+
+  **Guidelines:**
+  1. Use 2-5 strategies (not just one!)
+  2. Order strategies by priority (most important first)
+  3. Explain your reasoning for each strategy
+  4. Consider question breadth:
+     - Broad questions ("explain project") → file_pattern(README) + broad_overview
+     - Specific questions ("how does login work") → metadata_filter(Auth*) + semantic_search
+     - Cross-repo questions → cross_repo_api + metadata_filter across multiple repos
+  5. Be specific with parameters (don't use generic queries)
+  6. Estimate total chunks you expect to retrieve
+
+  **Output Format:**
+  ```json
+  {
+    "overall_reasoning": "Brief explanation of retrieval strategy",
+    "estimated_chunks": 25,
+    "strategies": [
+      {
+        "type": "file_pattern",
+        "parameters": {
+          "pattern": "README\\.md"
+        },
+        "target_repos": ["{{currentRepo}}"],
+        "reasoning": "Need project overview from README",
+        "priority": 1,
+        "max_results": 1
+      },
+      {
+        "type": "metadata_filter",
+        "parameters": {
+          "annotations": "@SpringBootApplication"
+        },
+        "target_repos": ["{{currentRepo}}"],
+        "reasoning": "Need main application entry point",
+        "priority": 2,
+        "max_results": 1
+      },
+      {
+        "type": "semantic_search",
+        "parameters": {
+          "query": "application configuration and startup",
+          "top_k": 10
+        },
+        "target_repos": ["{{currentRepo}}"],
+        "reasoning": "Need initialization and configuration logic",
+        "priority": 3,
+        "max_results": 10
+      }
+    ]
+  }
+  ```
+
+  ═══════════════════════════════════════════════════════════════
+  IMPORTANT RULES
+  ═══════════════════════════════════════════════════════════════
+
+  1. ALWAYS return valid JSON (no additional text before or after)
+  2. Use SPECIFIC parameters (avoid generic "find code related to X")
+  3. Target the RIGHT repos (use target_repos to specify which repos to search)
+  4. Explain your reasoning clearly
+  5. Prioritize quality over quantity (fewer high-quality strategies > many generic ones)
+
+  Generate the retrieval plan now:

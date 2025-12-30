@@ -1,5 +1,6 @@
 package com.purchasingpower.autoflow.workflow.agents;
 
+import com.purchasingpower.autoflow.model.FileOperation;
 import com.purchasingpower.autoflow.service.MavenBuildService;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
@@ -63,17 +64,20 @@ public class BuildValidatorAgent {
         }
     }
 
+    /**
+     * Apply code edits to workspace using Strategy pattern.
+     * Replaces if-else chain with enum-based operation dispatch.
+     *
+     * @param state workflow state containing generated code edits
+     * @throws Exception if file operation fails
+     */
     private void applyCode(WorkflowState state) throws Exception {
-        // Apply file edits
+        // Apply file edits using FileOperation enum strategy
         for (com.purchasingpower.autoflow.model.llm.FileEdit edit : state.getGeneratedCode().getEdits()) {
             File file = new File(state.getWorkspaceDir(), edit.getPath());
-            
-            if ("create".equals(edit.getOp()) || "modify".equals(edit.getOp())) {
-                file.getParentFile().mkdirs();
-                Files.writeString(file.toPath(), edit.getContent());
-            } else if ("delete".equals(edit.getOp())) {
-                file.delete();
-            }
+
+            // Strategy pattern - enum dispatches to appropriate implementation
+            FileOperation.fromString(edit.getOp()).execute(file, edit.getContent());
         }
     }
 }

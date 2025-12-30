@@ -1,5 +1,6 @@
 package com.purchasingpower.autoflow.workflow.agents;
 
+import com.purchasingpower.autoflow.model.WorkflowStatus;
 import com.purchasingpower.autoflow.service.BitbucketService;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.util.GitUrlParser;
@@ -49,7 +50,7 @@ public class PRCreatorAgent {
 
             Map<String, Object> updates = new HashMap<>(state.toMap());
             updates.put("prUrl", prUrl);
-            updates.put("workflowStatus", "COMPLETED");
+            updates.put("workflowStatus", WorkflowStatus.COMPLETED.name());
 
             log.info("✅ Pull request created: {}", prUrl);
             

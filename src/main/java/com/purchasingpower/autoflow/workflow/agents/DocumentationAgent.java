@@ -2,6 +2,7 @@ package com.purchasingpower.autoflow.workflow.agents;
 
 import com.purchasingpower.autoflow.client.GeminiClient;
 import com.purchasingpower.autoflow.client.PineconeRetriever;
+import com.purchasingpower.autoflow.model.WorkflowStatus;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
 import com.purchasingpower.autoflow.util.GitUrlParser;
@@ -148,7 +149,7 @@ public class DocumentationAgent {
             ));
 
             // Mark workflow as complete (skip code generation agents)
-            updates.put("workflowStatus", "COMPLETED");
+            updates.put("workflowStatus", WorkflowStatus.COMPLETED.name());
 
             return updates;
 

@@ -1,6 +1,7 @@
 package com.purchasingpower.autoflow.workflow;
 
 import com.purchasingpower.autoflow.model.dto.WorkflowEvent;
+import com.purchasingpower.autoflow.model.WorkflowStatus;
 import com.purchasingpower.autoflow.service.WorkflowStreamService;
 import com.purchasingpower.autoflow.workflow.agents.*;
 import com.purchasingpower.autoflow.workflow.state.AgentDecision;
@@ -100,7 +101,7 @@ public class AutoFlowWorkflow {
 
         graph.addNode("ask_developer", node_async(s -> {
             Map<String, Object> updates = new java.util.HashMap<>(s.toMap());
-            updates.put("workflowStatus", "PAUSED");
+            updates.put("workflowStatus", WorkflowStatus.PAUSED.name());
             return updates;
         }));
 
@@ -108,7 +109,7 @@ public class AutoFlowWorkflow {
             log.info("💬 Responding to casual chat message");
             Map<String, Object> updates = new java.util.HashMap<>(s.toMap());
             updates.put("lastAgentDecision", AgentDecision.endSuccess("👋 Hello! I'm ready to help with your codebase. What would you like to work on?"));
-            updates.put("workflowStatus", "COMPLETED");
+            updates.put("workflowStatus", WorkflowStatus.COMPLETED.name());
             return updates;
         }));
 
@@ -270,7 +271,7 @@ public class AutoFlowWorkflow {
         ));
 
         Map<String, Object> initialData = new java.util.HashMap<>(initialState.toMap());
-        initialData.put("workflowStatus", "RUNNING");
+        initialData.put("workflowStatus", WorkflowStatus.RUNNING.name());
         initialData.put("buildAttempt", 0);
         initialData.put("reviewAttempt", 0);
 
@@ -327,7 +328,7 @@ public class AutoFlowWorkflow {
             }
 
             Map<String, Object> errorData = new java.util.HashMap<>(initialData);
-            errorData.put("workflowStatus", "FAILED");
+            errorData.put("workflowStatus", WorkflowStatus.FAILED.name());
             errorData.put("lastAgentDecision", AgentDecision.error(e.getMessage()));
             return WorkflowState.fromMap(errorData);
         }

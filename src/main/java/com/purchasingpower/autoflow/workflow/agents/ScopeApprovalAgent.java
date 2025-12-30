@@ -1,5 +1,9 @@
 package com.purchasingpower.autoflow.workflow.agents;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.purchasingpower.autoflow.client.GeminiClient;
+import com.purchasingpower.autoflow.service.PromptService;
 import com.purchasingpower.autoflow.workflow.state.AgentDecision;
 import com.purchasingpower.autoflow.workflow.state.ChatMessage;
 import com.purchasingpower.autoflow.workflow.state.ScopeProposal;
@@ -9,62 +13,39 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
-import java.util.regex.Pattern;
 
 /**
- * Validates user responses to scope proposals with fuzzy approval matching.
+ * ScopeApprovalAgent - LLM-based natural language approval detection.
  *
- * Handles natural language responses like:
- * - "yes", "yeah", "yep", "yup"
- * - "ok", "okay", "k"
- * - "approved", "approve", "confirm"
- * - "go ahead", "proceed", "continue"
- * - "implement your plan", "looks good"
- * - "no", "nope", "reject", "cancel"
- * - "modify", "change", "adjust"
+ * <p>WHY LLM instead of keywords:
+ * Developers type naturally - "that looks right", "perfect, let's do it",
+ * "yeah but change X to Y". Hardcoded keywords can't handle the variety
+ * and nuance of human language.
+ *
+ * <p>This agent uses the scope-approval.yaml prompt to send user responses
+ * to Gemini for intelligent interpretation, returning structured JSON:
+ * <pre>
+ * {
+ *   "approved": true|false,
+ *   "approvalType": "full|partial|rejected",
+ *   "modifiedScope": {...}  // if partial approval with changes
+ * }
+ * </pre>
+ *
+ * @see PromptService
+ * @see GeminiClient
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class ScopeApprovalAgent {
 
-    // Fuzzy approval patterns (case-insensitive)
-    private static final Set<String> APPROVAL_KEYWORDS = Set.of(
-        "yes", "yeah", "yep", "yup", "ya",
-        "ok", "okay", "k", "kk",
-        "approved", "approve", "confirm", "confirmed",
-        "proceed", "continue", "go", "ahead",
-        "looks good", "lgtm", "sounds good",
-        "do it", "implement", "ship", "ship it",
-        "correct", "right", "exactly"
-    );
-
-    private static final Set<String> REJECTION_KEYWORDS = Set.of(
-        "no", "nope", "nah",
-        "reject", "rejected", "decline",
-        "cancel", "cancelled", "stop",
-        "wrong", "incorrect"
-    );
-
-    private static final Set<String> MODIFICATION_KEYWORDS = Set.of(
-        "modify", "change", "adjust", "update",
-        "edit", "revise", "different",
-        "but", "except", "instead"
-    );
-
-    // Patterns for multi-word approval phrases
-    private static final List<Pattern> APPROVAL_PATTERNS = List.of(
-        Pattern.compile("go\\s+ahead", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("looks?\\s+good", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("sounds?\\s+good", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("implement.*plan", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("your\\s+plan", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("do\\s+it", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("ship\\s+it", Pattern.CASE_INSENSITIVE)
-    );
+    private final GeminiClient geminiClient;
+    private final PromptService promptService;
+    private final ObjectMapper objectMapper;
 
     public Map<String, Object> execute(WorkflowState state) {
-        log.info("✅ Validating scope approval response...");
+        log.info("✅ Validating scope approval using LLM natural language understanding...");
 
         Map<String, Object> updates = new HashMap<>(state.toMap());
 
@@ -81,7 +62,7 @@ public class ScopeApprovalAgent {
         if (history == null || history.isEmpty()) {
             log.warn("⚠️ No conversation history - cannot validate approval");
             updates.put("lastAgentDecision", AgentDecision.askDev(
-                "Please respond with 'yes' to approve or 'no' to reject the scope."
+                "Please respond to approve or modify the scope."
             ));
             return updates;
         }
@@ -93,112 +74,151 @@ public class ScopeApprovalAgent {
                 .map(ChatMessage::getContent)
                 .orElse("");
 
+        if (userResponse.isBlank()) {
+            log.warn("⚠️ Empty user response");
+            updates.put("lastAgentDecision", AgentDecision.askDev(
+                "Please respond to approve or modify the scope."
+            ));
+            return updates;
+        }
+
         log.info("📨 User response: '{}'", userResponse);
 
-        // Validate response with fuzzy matching
-        ApprovalDecision decision = parseApproval(userResponse);
+        // Use LLM to interpret natural language response
+        try {
+            ApprovalResult result = interpretResponseWithLLM(
+                userResponse,
+                proposal,
+                state.getConversationId()
+            );
+            log.info("🎯 LLM interpretation: approved={}, type={}",
+                    result.approved, result.approvalType);
 
-        log.info("🎯 Approval decision: {}", decision);
-
-        switch (decision) {
-            case APPROVED:
-                log.info("✅ Scope approved! Proceeding to context builder...");
+            if (result.approved && "full".equals(result.approvalType)) {
+                log.info("✅ Full approval - proceeding to context builder");
                 updates.put("lastAgentDecision", AgentDecision.proceed());
-                break;
 
-            case REJECTED:
-                log.info("❌ Scope rejected. Asking for clarification...");
+            } else if (result.approved && "partial".equals(result.approvalType)) {
+                log.info("🔧 Partial approval with modifications requested");
                 updates.put("lastAgentDecision", AgentDecision.askDev(
-                    "❌ **Scope Rejected**\n\n" +
-                    "Please provide more details about what you'd like changed:\n" +
-                    "- Which files should be added/removed?\n" +
-                    "- What's the correct scope?\n" +
-                    "- Any specific requirements I missed?"
-                ));
-                break;
-
-            case MODIFICATION_REQUESTED:
-                log.info("🔧 User wants modifications. Asking for details...");
-                updates.put("lastAgentDecision", AgentDecision.askDev(
-                    "🔧 **Modification Requested**\n\n" +
-                    "I understand you want to make changes. Please specify:\n" +
-                    "- What specifically should be changed?\n" +
+                    "🔧 **Modifications Requested**\n\n" +
+                    "I understand you want to make some changes. " +
+                    "Please specify exactly what should be modified:\n" +
                     "- Which files to add or remove?\n" +
-                    "- Any other requirements?"
+                    "- What specific changes are needed?\n\n" +
+                    "Or say 'proceed as-is' to continue with current scope."
                 ));
-                break;
 
-            case UNCLEAR:
-                log.info("❓ Response unclear. Asking user to clarify...");
+            } else {
+                log.info("❌ Rejection detected - asking for clarification");
                 updates.put("lastAgentDecision", AgentDecision.askDev(
-                    "❓ **Response Unclear**\n\n" +
-                    "I didn't understand your response: \"" + userResponse + "\"\n\n" +
-                    "Please respond with:\n" +
-                    "- **'yes'** or **'approved'** to proceed\n" +
-                    "- **'no'** or **'reject'** to cancel\n" +
-                    "- **'modify'** with details if you want changes"
+                    "❌ **Scope Needs Changes**\n\n" +
+                    "I understand the current scope doesn't match your needs. " +
+                    "Please clarify:\n" +
+                    "- What should be changed?\n" +
+                    "- Which files/components are incorrect?\n" +
+                    "- What's the correct scope?\n\n" +
+                    "Or provide a new requirement description to start over."
                 ));
-                break;
+            }
+
+        } catch (Exception e) {
+            log.error("❌ Failed to interpret user response with LLM", e);
+            // Fallback: ask for clarification
+            updates.put("lastAgentDecision", AgentDecision.askDev(
+                "❓ **Response Unclear**\n\n" +
+                "I had trouble understanding your response: \"" + userResponse + "\"\n\n" +
+                "Please respond clearly:\n" +
+                "- Say **'yes'**, **'approved'**, or **'looks good'** to proceed\n" +
+                "- Say **'no'** or **'reject'** to cancel\n" +
+                "- Describe specific changes if you want modifications"
+            ));
         }
 
         return updates;
     }
 
     /**
-     * Parse user response with fuzzy matching.
+     * Use LLM to interpret user response with natural language understanding.
+     *
+     * <p>Sends user response to Gemini with scope-approval.yaml prompt.
+     * LLM returns structured JSON indicating approval status.
+     *
+     * @param userResponse user's natural language response
+     * @param proposal the scope proposal being evaluated
+     * @param conversationId conversation ID for LLM context
+     * @return structured approval result
+     * @throws Exception if LLM call fails or response is invalid
      */
-    private ApprovalDecision parseApproval(String response) {
-        if (response == null || response.isBlank()) {
-            return ApprovalDecision.UNCLEAR;
+    private ApprovalResult interpretResponseWithLLM(String userResponse, ScopeProposal proposal, String conversationId) throws Exception {
+        // Build prompt context
+        Map<String, Object> context = new HashMap<>();
+        context.put("userResponse", userResponse);
+        context.put("proposedScope", formatProposal(proposal));
+
+        // Load and execute scope-approval.yaml prompt
+        String promptText = promptService.buildPrompt("scope-approval", context);
+
+        // Call Gemini with JSON response format
+        String jsonResponse = geminiClient.callChatApiForJson(
+            promptText,
+            "scope-approval",
+            conversationId
+        );
+
+        // Parse JSON response
+        JsonNode root = objectMapper.readTree(jsonResponse);
+
+        ApprovalResult result = new ApprovalResult();
+        result.approved = root.path("approved").asBoolean(false);
+        result.approvalType = root.path("approvalType").asText("rejected");
+        result.confidence = root.path("confidence").asDouble(0.0);
+
+        if (root.has("modifiedScope")) {
+            result.modifiedScope = objectMapper.convertValue(
+                root.get("modifiedScope"),
+                Map.class
+            );
         }
 
-        String normalized = response.toLowerCase().trim();
+        log.info("🤖 LLM confidence: {}", String.format("%.0f%%", result.confidence * 100));
 
-        log.info("🔍 Analyzing response: '{}'", normalized);
-
-        // Check exact keyword matches first
-        for (String keyword : APPROVAL_KEYWORDS) {
-            if (normalized.equals(keyword) || normalized.contains(" " + keyword + " ") ||
-                normalized.startsWith(keyword + " ") || normalized.endsWith(" " + keyword)) {
-                log.info("   ✅ Matched approval keyword: '{}'", keyword);
-                return ApprovalDecision.APPROVED;
-            }
-        }
-
-        // Check approval patterns
-        for (Pattern pattern : APPROVAL_PATTERNS) {
-            if (pattern.matcher(normalized).find()) {
-                log.info("   ✅ Matched approval pattern: {}", pattern);
-                return ApprovalDecision.APPROVED;
-            }
-        }
-
-        // Check rejection keywords
-        for (String keyword : REJECTION_KEYWORDS) {
-            if (normalized.equals(keyword) || normalized.contains(" " + keyword + " ") ||
-                normalized.startsWith(keyword + " ") || normalized.endsWith(" " + keyword)) {
-                log.info("   ❌ Matched rejection keyword: '{}'", keyword);
-                return ApprovalDecision.REJECTED;
-            }
-        }
-
-        // Check modification keywords
-        for (String keyword : MODIFICATION_KEYWORDS) {
-            if (normalized.contains(keyword)) {
-                log.info("   🔧 Matched modification keyword: '{}'", keyword);
-                return ApprovalDecision.MODIFICATION_REQUESTED;
-            }
-        }
-
-        // Default to unclear if no patterns matched
-        log.info("   ❓ No clear approval/rejection pattern found");
-        return ApprovalDecision.UNCLEAR;
+        return result;
     }
 
-    private enum ApprovalDecision {
-        APPROVED,
-        REJECTED,
-        MODIFICATION_REQUESTED,
-        UNCLEAR
+    /**
+     * Format scope proposal for LLM context.
+     */
+    private String formatProposal(ScopeProposal proposal) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("**Files to modify:**\n");
+        if (proposal.getFilesToModify() != null) {
+            proposal.getFilesToModify().forEach(f ->
+                sb.append("- ").append(f).append("\n")
+            );
+        }
+        sb.append("\n**Files to create:**\n");
+        if (proposal.getFilesToCreate() != null) {
+            proposal.getFilesToCreate().forEach(f ->
+                sb.append("- ").append(f).append("\n")
+            );
+        }
+        sb.append("\n**Dependencies:**\n");
+        if (proposal.getDependencies() != null) {
+            proposal.getDependencies().forEach(d ->
+                sb.append("- ").append(d).append("\n")
+            );
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Structured approval result from LLM.
+     */
+    private static class ApprovalResult {
+        boolean approved;
+        String approvalType;  // "full", "partial", "rejected"
+        double confidence;
+        Map<String, Object> modifiedScope;
     }
 }

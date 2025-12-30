@@ -42,6 +42,24 @@ app:
     prefixes:
       "Story": "feature/"
       "Bug": "bugfix/"
+    # Git provider URL parsing strategies
+    providers:
+      github:
+        pattern: "github.com"
+        branch-separator: "/tree/"
+        default-branch: "main"
+      gitlab:
+        pattern: "gitlab.com"
+        branch-separator: "/-/tree/"
+        default-branch: "main"
+      bitbucket:
+        pattern: "bitbucket.org"
+        branch-separator: "/src/"
+        default-branch: "master"
+      azure:
+        pattern: "dev.azure.com"
+        branch-separator: "?version=GB"
+        default-branch: "main"
   jira:
     base-url: https://${JIRA_DOMAIN}.atlassian.net
     username: ${JIRA_USER}
@@ -63,10 +81,27 @@ app:
     api-key: ${GEMINI_KEY}
     chat-model: gemini-flash-latest
     embedding-model: text-embedding-004
+    # Temperature settings per agent type
+    default-temperature: 0.7
+    json-temperature: 0.2  # Lower for structured JSON output
+    agent-temperatures:
+      code-generator: 0.3  # More deterministic for code generation
+      documentation: 0.8   # More creative for documentation
+      scope-discovery: 0.5 # Balanced for discovery
+      requirement-analyzer: 0.0  # Fully deterministic for classification
+    # Retry configuration
+    retry:
+      max-attempts: 3
+      initial-backoff-seconds: 2
+      max-backoff-seconds: 30
+      multiplier: 2.0
+      retryable-status-codes: [429, 500, 502, 503, 504]
 
   pinecone:
     api-key: ${PINECONE_KEY}
     index-name: ${PINECONE_INDEX}
+    top-k: 20  # Number of similar vectors to retrieve
+    similarity-threshold: 0.7  # Minimum similarity score
 
   # ==============================================================
   # CODE QUALITY & GENERATION SETTINGS
@@ -108,6 +143,67 @@ app:
       - "incompatible types"
       - "deprecated"
       - "package .* does not exist"
+
+  # ==============================================================
+  # RETRY CONFIGURATION (Global defaults)
+  # ==============================================================
+  retry:
+    max-attempts: 3
+    backoff-ms: 1000
+    max-backoff-ms: 10000
+    multiplier: 2.0
+
+  # ==============================================================
+  # AGENT-SPECIFIC CONFIGURATIONS
+  # ==============================================================
+  agents:
+    # Scope Discovery Agent - Search and similarity thresholds
+    scope-discovery:
+      max-files: 7
+      max-classes: 3
+      max-chunks: 10
+      max-dependencies: 5
+      similarity:
+        min-threshold: 0.5
+        max-threshold: 0.8
+        min-matches: 3
+        significant-gap: 0.15
+        top-score-multiplier: 0.7
+      default-architecture: "Spring Boot MVC"
+
+    # Requirement Analyzer - Confidence thresholds
+    requirement-analyzer:
+      min-confidence: 0.7
+
+    # Context Builder - Token budget and confidence
+    context-builder:
+      min-confidence: 0.9
+      ask-user-below-threshold: true
+      max-token-budget: 10000
+
+    # Build Validator - Retry and timeout
+    build:
+      max-retry-attempts: 3
+      timeout-minutes: 10
+
+    # PR Reviewer - Retry configuration
+    code-review:
+      max-retry-attempts: 2
+
+    # Documentation Agent - Limits for code retrieval
+    documentation:
+      max-code-matches: 10
+      max-fallback-nodes: 20
+      max-log-preview: 5
+
+    # Test Runner - OS-specific shell configuration
+    test-runner:
+      shell-windows: "cmd.exe"
+      shell-flag-windows: "/c"
+      shell-unix: "sh"
+      shell-flag-unix: "-c"
+      test-command: "mvn -B test"
+      timeout-minutes: 30
 
 
 # ==============================================================

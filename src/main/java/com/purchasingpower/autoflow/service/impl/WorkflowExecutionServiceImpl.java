@@ -1,6 +1,7 @@
 package com.purchasingpower.autoflow.service.impl;
 
 import com.purchasingpower.autoflow.model.workflow.WorkflowStateEntity;
+import com.purchasingpower.autoflow.model.WorkflowStatus;
 import com.purchasingpower.autoflow.repository.WorkflowStateRepository;
 import com.purchasingpower.autoflow.service.ConversationService;
 import com.purchasingpower.autoflow.service.WorkflowExecutionService;
@@ -54,7 +55,7 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
 
             // FIX: Create new state with RUNNING status
             Map<String, Object> data = new HashMap<>(initialState.toMap());
-            data.put("workflowStatus", "RUNNING");
+            data.put("workflowStatus", WorkflowStatus.RUNNING.name());
             WorkflowState runningState = WorkflowState.fromMap(data);
 
             // Save initial state
@@ -82,7 +83,7 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
         try {
             // FIX: Create new state with RUNNING status (don't modify original)
             Map<String, Object> data = new HashMap<>(state.toMap());
-            data.put("workflowStatus", "RUNNING");
+            data.put("workflowStatus", WorkflowStatus.RUNNING.name());
             WorkflowState runningState = WorkflowState.fromMap(data);
 
             // Save state
@@ -164,7 +165,7 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
             if (state != null) {
                 // FIX: Create new state with CANCELLED status
                 Map<String, Object> data = new HashMap<>(state.toMap());
-                data.put("workflowStatus", "CANCELLED");
+                data.put("workflowStatus", WorkflowStatus.CANCELLED.name());
                 WorkflowState cancelledState = WorkflowState.fromMap(data);
 
                 saveWorkflowState(cancelledState);
@@ -214,7 +215,7 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
 
             // FIX: Create new FAILED state (don't modify original)
             Map<String, Object> data = new HashMap<>(state.toMap());
-            data.put("workflowStatus", "FAILED");
+            data.put("workflowStatus", WorkflowStatus.FAILED.name());
             data.put("lastAgentDecision", AgentDecision.error(e.getMessage()));
             WorkflowState failedState = WorkflowState.fromMap(data);
 

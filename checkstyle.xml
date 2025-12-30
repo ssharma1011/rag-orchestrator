@@ -1,0 +1,200 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+    "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+    "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<!--
+    Checkstyle configuration for AI-generated code
+    Enforces coding standards from CODING_STANDARDS.md
+-->
+<module name="Checker">
+    <property name="severity" value="error"/>
+    <property name="fileExtensions" value="java"/>
+
+    <!-- ================================================================ -->
+    <!-- FILE SIZE & STRUCTURE                                           -->
+    <!-- ================================================================ -->
+
+    <module name="FileLength">
+        <property name="max" value="500"/>
+        <message key="maxLen.file"
+                 value="File exceeds 500 lines - consider splitting into smaller classes"/>
+    </module>
+
+    <module name="TreeWalker">
+
+        <!-- ================================================================ -->
+        <!-- METHOD COMPLEXITY LIMITS                                         -->
+        <!-- ================================================================ -->
+
+        <module name="MethodLength">
+            <property name="max" value="20"/>
+            <property name="countEmpty" value="false"/>
+            <message key="maxLen.method"
+                     value="Method exceeds 20 lines - refactor into smaller methods"/>
+        </module>
+
+        <module name="CyclomaticComplexity">
+            <property name="max" value="10"/>
+            <message key="cyclomaticComplexity"
+                     value="Cyclomatic complexity is {0,number,integer} (max allowed is {1,number,integer}) - refactor using Strategy pattern instead of if-else chains"/>
+        </module>
+
+        <module name="ParameterNumber">
+            <property name="max" value="4"/>
+            <message key="maxParam"
+                     value="Method has {0,number,integer} parameters (max is {1,number,integer}) - use parameter object (DTO) instead"/>
+        </module>
+
+        <!-- ================================================================ -->
+        <!-- NAMING CONVENTIONS                                              -->
+        <!-- ================================================================ -->
+
+        <module name="PackageName">
+            <property name="format" value="^[a-z]+(\.[a-z][a-z0-9]*)*$"/>
+        </module>
+
+        <module name="TypeName">
+            <property name="format" value="^[A-Z][a-zA-Z0-9]*$"/>
+        </module>
+
+        <module name="MethodName">
+            <property name="format" value="^[a-z][a-zA-Z0-9]*$"/>
+        </module>
+
+        <module name="ConstantName">
+            <property name="format" value="^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$"/>
+        </module>
+
+        <!-- ================================================================ -->
+        <!-- JAVADOC REQUIREMENTS                                            -->
+        <!-- ================================================================ -->
+
+        <module name="MissingJavadocType">
+            <property name="scope" value="public"/>
+            <property name="tokens" value="INTERFACE_DEF, CLASS_DEF"/>
+            <message key="javadoc.missing"
+                     value="Public {0} ''{1}'' missing Javadoc - add documentation explaining WHY this exists"/>
+        </module>
+
+        <module name="MissingJavadocMethod">
+            <property name="scope" value="public"/>
+            <property name="allowMissingPropertyJavadoc" value="true"/>
+            <message key="javadoc.missing"
+                     value="Public method ''{0}'' missing Javadoc - document @param, @return, @throws"/>
+        </module>
+
+        <module name="JavadocMethod">
+            <property name="accessModifiers" value="public"/>
+            <property name="validateThrows" value="true"/>
+        </module>
+
+        <!-- ================================================================ -->
+        <!-- CODE STRUCTURE                                                  -->
+        <!-- ================================================================ -->
+
+        <module name="NeedBraces">
+            <message key="needBraces"
+                     value="''{0}'' statement must use braces - prevents bugs"/>
+        </module>
+
+        <module name="LeftCurly">
+            <property name="option" value="eol"/>
+        </module>
+
+        <module name="RightCurly">
+            <property name="option" value="same"/>
+        </module>
+
+        <!-- ================================================================ -->
+        <!-- CODING PRACTICES                                                -->
+        <!-- ================================================================ -->
+
+        <module name="EmptyBlock">
+            <property name="option" value="text"/>
+            <message key="block.empty"
+                     value="Empty {0} block - either implement or add comment explaining WHY it's empty"/>
+        </module>
+
+        <module name="AvoidNestedBlocks"/>
+
+        <module name="IllegalCatch">
+            <property name="illegalClassNames" value="java.lang.Exception, java.lang.Throwable, java.lang.RuntimeException"/>
+            <message key="illegal.catch"
+                     value="Catching generic {0} is forbidden - catch specific exceptions"/>
+        </module>
+
+        <module name="IllegalThrows">
+            <property name="illegalClassNames" value="java.lang.Exception, java.lang.Throwable, java.lang.RuntimeException"/>
+        </module>
+
+        <module name="SimplifyBooleanExpression"/>
+        <module name="SimplifyBooleanReturn"/>
+
+        <module name="StringLiteralEquality">
+            <message key="string.literal.equality"
+                     value="Use .equals() to compare strings, not =="/>
+        </module>
+
+        <!-- ================================================================ -->
+        <!-- WHITESPACE & FORMATTING                                         -->
+        <!-- ================================================================ -->
+
+        <module name="WhitespaceAround">
+            <property name="allowEmptyConstructors" value="true"/>
+            <property name="allowEmptyMethods" value="true"/>
+            <property name="allowEmptyTypes" value="true"/>
+            <property name="allowEmptyLoops" value="true"/>
+        </module>
+
+        <module name="WhitespaceAfter">
+            <property name="tokens" value="COMMA, SEMI"/>
+        </module>
+
+        <module name="NoWhitespaceBefore">
+            <property name="tokens" value="SEMI, POST_INC, POST_DEC"/>
+        </module>
+
+        <module name="EmptyLineSeparator">
+            <property name="allowNoEmptyLineBetweenFields" value="true"/>
+            <property name="allowMultipleEmptyLines" value="false"/>
+        </module>
+
+        <!-- ================================================================ -->
+        <!-- IMPORTS                                                         -->
+        <!-- ================================================================ -->
+
+        <module name="AvoidStarImport">
+            <message key="import.avoidStar"
+                     value="Avoid wildcard imports - use explicit imports for clarity"/>
+        </module>
+
+        <module name="RedundantImport"/>
+        <module name="UnusedImports"/>
+
+        <!-- ================================================================ -->
+        <!-- MISC                                                            -->
+        <!-- ================================================================ -->
+
+        <module name="ArrayTypeStyle"/>
+        <module name="UpperEll"/>
+
+        <module name="TodoComment">
+            <property name="severity" value="warning"/>
+            <property name="format" value="(TODO|FIXME)"/>
+            <message key="todo.match"
+                     value="TODO/FIXME comment found - create issue or implement immediately"/>
+        </module>
+
+    </module>
+
+    <!-- ================================================================ -->
+    <!-- LINE LENGTH (RELAXED FOR LOGGING)                                -->
+    <!-- ================================================================ -->
+
+    <module name="LineLength">
+        <property name="max" value="120"/>
+        <property name="ignorePattern" value="^package.*|^import.*|a href|href|http://|https://|ftp://"/>
+    </module>
+
+</module>

@@ -68,6 +68,47 @@ app:
     api-key: ${PINECONE_KEY}
     index-name: ${PINECONE_INDEX}
 
+  # ==============================================================
+  # CODE QUALITY & GENERATION SETTINGS
+  # ==============================================================
+  code-quality:
+    max-complexity: 10
+    max-method-lines: 20
+    max-parameters: 4
+    max-nesting-depth: 3
+    enforce-interface-pattern: true
+    enforce-immutable-dtos: true
+    forbid-null-returns: true
+    forbid-if-else-chains: true
+    min-if-else-for-strategy: 3  # Use Strategy pattern if 3+ branches
+
+    compilation:
+      enabled: true
+      max-attempts: 3
+      timeout-seconds: 30
+      fail-on-warnings: false
+
+    static-analysis:
+      checkstyle-enabled: true
+      pmd-enabled: true
+      fail-on-violations: true
+
+  # ==============================================================
+  # WEB SEARCH FOR LATEST LIBRARY APIs
+  # ==============================================================
+  web-search:
+    enabled: ${WEB_SEARCH_ENABLED:false}
+    provider: tavily  # Options: tavily, serpapi, google
+    api-key: ${TAVILY_API_KEY:}
+    max-results: 5
+    timeout-seconds: 10
+    # Trigger web search if compilation error matches these patterns
+    trigger-patterns:
+      - "cannot find symbol"
+      - "incompatible types"
+      - "deprecated"
+      - "package .* does not exist"
+
 
 # ==============================================================
 # NEO4J SPRING PROPERTIES

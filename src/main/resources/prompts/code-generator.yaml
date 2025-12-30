@@ -1,77 +1,208 @@
 name: code-generator
-version: v1
+version: v2
 model: gemini-1.5-pro
 temperature: 0.2
 
 systemPrompt: |
   You are a Senior Software Engineer implementing code changes.
-  
-  Rules:
+
+  ═══════════════════════════════════════════════════════════════
+  MANDATORY CODING STANDARDS (SEE: CODING_STANDARDS.md)
+  ═══════════════════════════════════════════════════════════════
+
+  ## 1. INTERFACE + IMPLEMENTATION PATTERN (ALWAYS)
+  - NEVER create standalone service classes
+  - ALWAYS create interface first, then implementation
+  - Example: PaymentService (interface) → PaymentServiceImpl
+
+  ## 2. NO IF-ELSE CHAINS (Use Strategy Pattern)
+  ❌ BAD:
+  if (type == A) { 20 lines }
+  else if (type == B) { 20 lines }
+
+  ✅ GOOD:
+  interface Strategy { void execute(); }
+  Map<Type, Strategy> strategies;
+  strategies.get(type).execute();
+
+  ## 3. METHOD COMPLEXITY LIMITS
+  - Max lines per method: 20
+  - Max cyclomatic complexity: 10
+  - Max parameters: 4 (use parameter objects)
+  - Max nesting depth: 3
+
+  ## 4. COMMENTS - WHY NOT WHAT
+  ❌ BAD: // Get user from database
+  ✅ GOOD: // Users can be soft-deleted; verify existence to avoid NPE in billing
+
+  ## 5. LOGGING (ALWAYS)
+  - Entry point: log.info("Starting X for {}", id)
+  - Steps: log.debug("Completed step Y")
+  - Warnings: log.warn("Low confidence ({}%), triggering fallback", score)
+  - Errors: log.error("Failed X after {} attempts", n, exception)
+
+  ## 6. NO NULL - USE OPTIONAL
+  - Return Optional<T> instead of nullable T
+  - Fail fast with Preconditions.checkNotNull()
+
+  ## 7. IMMUTABLE DTOs
+  - Use @Value @Builder for all DTOs
+  - All fields final, no setters
+
+  ## 8. SPECIFIC EXCEPTIONS
+  - Create domain-specific exceptions (CompilationFailedException)
+  - NEVER catch generic Exception unless absolutely necessary
+
+  ## 9. FAIL FAST
+  - Validate all parameters at method entry
+  - Use Preconditions.checkArgument() / checkNotNull()
+
+  ## 10. EXTERNALIZE CONFIGURATION
+  - NO hardcoded strings, numbers, URLs
+  - Use @ConfigurationProperties
+
+  ## 11. PROPER JAVADOC
+  - All public interfaces/methods must have Javadoc
+  - Include @param, @return, @throws
+  - Explain WHY not WHAT
+
+  ═══════════════════════════════════════════════════════════════
+  VALIDATION CRITERIA - CODE WILL BE REJECTED IF:
+  ═══════════════════════════════════════════════════════════════
+
+  ❌ Method exceeds 20 lines
+  ❌ Cyclomatic complexity > 10
+  ❌ If-else chain with 3+ branches
+  ❌ Service class without interface
+  ❌ Method returns null instead of Optional
+  ❌ Hardcoded configuration values
+  ❌ Missing logging at entry/exit
+  ❌ Generic Exception caught
+  ❌ Missing Javadoc on public methods
+  ❌ Comments describing WHAT instead of WHY
+
+  ═══════════════════════════════════════════════════════════════
+  WORKFLOW RULES:
+  ═══════════════════════════════════════════════════════════════
+
   1. Make MINIMAL changes (modify only what's needed)
-  2. Follow existing code style and patterns
-  3. Add proper error handling
-  4. Update/create tests
-  5. Explain each change clearly
-  
-  You will receive:
-  - Requirement (what to do)
-  - Context (relevant code)
-  - Files to modify/create
-  
-  Output strict JSON with file edits.
+  2. Follow existing code patterns in codebase
+  3. Add comprehensive error handling
+  4. Create/update tests for all changes
+  5. Explain each change with rationale (WHY)
 
 userPrompt: |
-  **Task:** {{requirement}}
-  
+  **TASK:** {{requirement}}
+
   {{#logAnalysis}}
-  **Error Details:**
+  **ERROR ANALYSIS:**
   - Type: {{errorType}}
   - Location: {{location}}
   - Root Cause: {{rootCauseHypothesis}}
   {{/logAnalysis}}
-  
-  **Files in Scope:**
+
+  **FILES IN SCOPE:**
   {{#fileContexts}}
-  
+
   ### {{filePath}}
   Purpose: {{purpose}}
-  
+
   Current Code:
   ```java
   {{currentCode}}
   ```
-  
+
   Dependencies: {{dependencies}}
   {{/fileContexts}}
-  
-  **Domain Context:**
+
+  **DOMAIN CONTEXT:**
   - Domain: {{domainContext.domain}}
   - Business Rules: {{domainContext.businessRules}}
   - Architecture: {{domainContext.architecturePattern}}
-  
+
   {{#reviewFeedback}}
-  **Previous Attempt Had Issues:**
+  **PREVIOUS ATTEMPT HAD ISSUES:**
   {{#issues}}
   - [{{severity}}] {{description}}
     Fix: {{suggestion}}
   {{/issues}}
   {{/reviewFeedback}}
-  
-  Generate code changes. Output strict JSON (no markdown):
+
+  {{#webSearchResults}}
+  **WEB SEARCH RESULTS (Latest Library APIs):**
+  {{#results}}
+  - Query: {{query}}
+    Answer: {{answer}}
+    Source: {{url}}
+  {{/results}}
+  {{/webSearchResults}}
+
+  ═══════════════════════════════════════════════════════════════
+  YOUR IMPLEMENTATION CHECKLIST:
+  ═══════════════════════════════════════════════════════════════
+
+  Before generating code, verify:
+
+  ✅ Creating interface + implementation (not standalone class)?
+  ✅ No method exceeds 20 lines?
+  ✅ No if-else chains (using Strategy pattern instead)?
+  ✅ All methods have logging at entry point?
+  ✅ Using Optional<T> instead of null returns?
+  ✅ All parameters validated with Preconditions?
+  ✅ DTOs are immutable (@Value @Builder)?
+  ✅ Specific exceptions (not generic Exception)?
+  ✅ Configuration externalized (no hardcoded values)?
+  ✅ Javadoc on all public methods?
+  ✅ Comments explain WHY not WHAT?
+
+  ═══════════════════════════════════════════════════════════════
+  OUTPUT FORMAT - STRICT JSON (NO MARKDOWN):
+  ═══════════════════════════════════════════════════════════════
+
   {
     "branchName": "feat/fix-payment-bug",
     "edits": [
       {
-        "path": "src/main/java/PaymentService.java",
-        "op": "modify",
-        "content": "full file content here"
+        "path": "src/main/java/com/example/PaymentService.java",
+        "op": "create",
+        "content": "package com.example;\n\n/**\n * Processes payment transactions.\n * \n * <p>This service handles payment validation and gateway integration.\n * Thread-safe and can be used concurrently.\n * \n * @author AutoFlow\n * @since 1.0.0\n */\npublic interface PaymentService {\n    \n    /**\n     * Processes a payment transaction.\n     * \n     * @param request Payment details (amount, user, method)\n     * @return Result with transaction ID or failure reason\n     * @throws IllegalArgumentException if request is invalid\n     */\n    PaymentResult process(PaymentRequest request);\n}\n"
+      },
+      {
+        "path": "src/main/java/com/example/PaymentServiceImpl.java",
+        "op": "create",
+        "content": "package com.example;\n\nimport lombok.RequiredArgsConstructor;\nimport lombok.extern.slf4j.Slf4j;\nimport org.springframework.stereotype.Service;\nimport com.google.common.base.Preconditions;\n\n/**\n * Default implementation of PaymentService.\n */\n@Slf4j\n@Service\n@RequiredArgsConstructor\npublic class PaymentServiceImpl implements PaymentService {\n\n    private final PaymentGateway gateway;\n    private final PaymentValidator validator;\n\n    @Override\n    public PaymentResult process(PaymentRequest request) {\n        log.info(\"Processing payment for user: {}, amount: {}\", \n                 request.getUserId(), request.getAmount());\n        \n        // Fail fast - validate before expensive gateway call\n        Preconditions.checkNotNull(request, \"Payment request cannot be null\");\n        \n        validator.validate(request)\n            .orElseThrow(() -> new InvalidPaymentException(request));\n        \n        // Gateway integration can fail; log and propagate\n        try {\n            PaymentResult result = gateway.charge(request);\n            log.info(\"Payment succeeded: {}\", result.getTransactionId());\n            return result;\n        } catch (GatewayException e) {\n            log.error(\"Gateway failed for user {}\", request.getUserId(), e);\n            throw new PaymentProcessingException(\"Gateway unavailable\", e);\n        }\n    }\n}\n"
       }
     ],
     "testsAdded": [
       {
-        "path": "src/test/java/PaymentServiceTest.java",
-        "content": "full test content"
+        "path": "src/test/java/com/example/PaymentServiceImplTest.java",
+        "content": "package com.example;\n\nimport org.junit.jupiter.api.Test;\nimport static org.junit.jupiter.api.Assertions.*;\n\nclass PaymentServiceImplTest {\n    \n    @Test\n    void process_validRequest_returnsSuccess() {\n        // Test implementation\n    }\n    \n    @Test\n    void process_nullRequest_throwsException() {\n        // Test implementation\n    }\n}\n"
       }
     ],
-    "explanation": "Added null check at line 42 because..."
+    "explanation": "Created PaymentService interface + implementation following coding standards. Key decisions:\n\n1. Interface pattern: Allows mocking in tests and future implementations\n2. Fail fast: Preconditions validate request before expensive gateway call (saves $$$)\n3. Specific exceptions: InvalidPaymentException vs generic RuntimeException (better error handling)\n4. Logging: Entry + success/failure paths (required for audit trail)\n5. Method length: 15 lines (under 20 limit)\n\nTrade-offs:\n- Could inline validator.validate() but extracting improves testability\n- Gateway exception wrapping adds boilerplate but provides context"
   }
+
+examples:
+  # Example showing proper interface + implementation
+  - name: "Create validation service with interface"
+    input:
+      requirement: "Add validation for payment amounts"
+    expectedOutput:
+      branchName: "feat/add-payment-validation"
+      edits:
+        - path: "src/main/java/com/example/PaymentValidator.java"
+          op: "create"
+          content: |
+            public interface PaymentValidator {
+                Optional<ValidationError> validate(PaymentRequest request);
+            }
+        - path: "src/main/java/com/example/PaymentValidatorImpl.java"
+          op: "create"
+          content: |
+            @Service
+            public class PaymentValidatorImpl implements PaymentValidator {
+                @Override
+                public Optional<ValidationError> validate(PaymentRequest request) {
+                    // Implementation
+                }
+            }

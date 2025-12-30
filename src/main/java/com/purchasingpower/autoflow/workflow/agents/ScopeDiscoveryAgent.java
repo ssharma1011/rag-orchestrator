@@ -2,13 +2,13 @@ package com.purchasingpower.autoflow.workflow.agents;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.purchasingpower.autoflow.client.GeminiClient;
-import com.purchasingpower.autoflow.client.PineconeRetriever;
 import com.purchasingpower.autoflow.config.ScopeDiscoveryConfig;
 import com.purchasingpower.autoflow.model.agent.MethodMatch;
 import com.purchasingpower.autoflow.model.agent.ScopeProposalDTO;
 import com.purchasingpower.autoflow.model.graph.GraphNode;
 import com.purchasingpower.autoflow.model.retrieval.CodeContext;
 import com.purchasingpower.autoflow.repository.GraphNodeRepository;
+import com.purchasingpower.autoflow.service.CypherQueryService;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
 import com.purchasingpower.autoflow.service.graph.GraphTraversalService;
@@ -28,7 +28,7 @@ public class ScopeDiscoveryAgent {
     private final ScopeDiscoveryConfig config;
     private final GraphNodeRepository graphRepo;
     private final GraphTraversalService graphTraversal;
-    private final PineconeRetriever pineconeRetriever;
+    private final CypherQueryService cypherQueryService;
     private final GeminiClient geminiClient;
     private final PromptLibraryService promptLibrary;
     private final ObjectMapper objectMapper;
@@ -81,7 +81,7 @@ public class ScopeDiscoveryAgent {
         }
     }
 
-    // Track method-level matches from Pinecone
+    // Track method-level matches from Neo4j search
     // Key: className, Value: List of (methodName, score, content)
     private final Map<String, List<MethodMatch>> methodMatches = new HashMap<>();
 
@@ -126,19 +126,16 @@ public class ScopeDiscoveryAgent {
             candidates.addAll(domainClasses);
         }
 
-        // Strategy 2: Semantic search in Pinecone
-        log.info("\n🔎 Strategy 2: Semantic search in Pinecone...");
-        log.info("   Embedding requirement: '{}'", req.getSummary());
-
-        List<Double> requirementEmbedding = geminiClient.createEmbedding(req.getSummary());
-        log.info("   ✅ Created embedding vector (dimension: {})", requirementEmbedding.size());
+        // Strategy 2: Full-text search in Neo4j
+        log.info("\n🔎 Strategy 2: Full-text search in Neo4j...");
+        log.info("   Searching for: '{}'", req.getSummary());
 
         List<CodeContext> semanticMatches =
-                pineconeRetriever.findRelevantCodeStructured(requirementEmbedding, repoName);
-        log.info("   ✅ Pinecone returned {} semantic matches", semanticMatches.size());
+                cypherQueryService.fullTextSearch(repoName, req.getSummary(), config.getMaxChunks());
+        log.info("   ✅ Neo4j returned {} matches", semanticMatches.size());
 
         if (!semanticMatches.isEmpty()) {
-            log.info("   Top matches from Pinecone:");
+            log.info("   Top matches from Neo4j:");
             for (int i = 0; i < Math.min(5, semanticMatches.size()); i++) {
                 CodeContext match = semanticMatches.get(i);
                 log.info("      {}. {} (score: {}, class: {})",
@@ -167,9 +164,9 @@ public class ScopeDiscoveryAgent {
         Set<String> processedClasses = new HashSet<>();  // Track unique classes
 
         for (CodeContext match : filteredMatches) {
-            // Pinecone stores METHOD/FIELD chunks with IDs like:
+            // Neo4j search returns METHOD/FIELD chunks with IDs like:
             // "repo:com.package.ClassName.methodName"
-            // Extract class name from chunk ID (PineconeRetriever may not populate className field)
+            // Extract class name from chunk ID if not populated
 
             String className = match.className();
             if (className == null || className.isEmpty()) {
@@ -425,7 +422,7 @@ public class ScopeDiscoveryAgent {
     }
 
     /**
-     * Extract class name from Pinecone chunk ID.
+     * Extract class name from Neo4j chunk ID.
      * Format: "repo:com.package.ClassName.methodName" → "com.package.ClassName"
      * Format: "repo:com.package.ClassName" → "com.package.ClassName"
      */

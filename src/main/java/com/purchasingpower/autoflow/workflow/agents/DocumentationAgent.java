@@ -1,7 +1,6 @@
 package com.purchasingpower.autoflow.workflow.agents;
 
 import com.purchasingpower.autoflow.client.GeminiClient;
-import com.purchasingpower.autoflow.client.PineconeRetriever;
 import com.purchasingpower.autoflow.config.AgentConfig;
 import com.purchasingpower.autoflow.model.WorkflowStatus;
 import com.purchasingpower.autoflow.model.git.ParsedGitUrl;
@@ -39,7 +38,6 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class DocumentationAgent {
 
-    private final PineconeRetriever pineconeRetriever;
     private final GeminiClient geminiClient;
     private final PromptLibraryService promptLibrary;
     private final GitOperationsService gitService;
@@ -47,7 +45,7 @@ public class DocumentationAgent {
     private final AgentConfig agentConfig;
     private final GitUrlParser gitUrlParser;
 
-    // ✅ NEW: Dynamic retrieval components
+    // ✅ Dynamic retrieval components (using Neo4j, not Pinecone)
     private final RetrievalPlanner retrievalPlanner;
     private final DynamicRetrievalExecutor retrievalExecutor;
 
@@ -98,12 +96,12 @@ public class DocumentationAgent {
                         code.filePath())
                 );
             } else {
-                log.warn("⚠️ Pinecone returned ZERO results for query: {}", requirement);
+                log.warn("⚠️ Neo4j returned ZERO results for query: {}", requirement);
             }
 
-            // FALLBACK: If Pinecone returns 0 results, use Oracle CODE_NODES table
+            // FALLBACK: If Neo4j returns 0 results, use Oracle CODE_NODES table
             if (relevantCode.isEmpty()) {
-                log.warn("⚠️ Pinecone returned 0 results - falling back to Oracle CODE_NODES table");
+                log.warn("⚠️ Neo4j returned 0 results - falling back to Oracle CODE_NODES table");
 
                 List<com.purchasingpower.autoflow.model.graph.GraphNode> graphNodes =
                         graphNodeRepository.findByRepoName(repoName);

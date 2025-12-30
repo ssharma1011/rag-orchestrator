@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.purchasingpower.autoflow.config.GeminiConfig;
 import com.purchasingpower.autoflow.configuration.AppProperties;
+import com.purchasingpower.autoflow.model.ServiceType;
 import com.purchasingpower.autoflow.model.llm.CodeGenerationResponse;
 import com.purchasingpower.autoflow.model.metrics.LLMCallMetrics;
 import com.purchasingpower.autoflow.service.LLMMetricsService;
@@ -221,7 +222,7 @@ public class GeminiClient {
      */
     public String callChatApi(String prompt, String agentName, String conversationId) {
         var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
-                com.purchasingpower.autoflow.util.ExternalCallLogger.ServiceType.GEMINI,
+                ServiceType.GEMINI,
                 "generateContent",
                 log
         );

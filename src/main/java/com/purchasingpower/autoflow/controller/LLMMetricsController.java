@@ -1,5 +1,7 @@
 package com.purchasingpower.autoflow.controller;
 
+import com.purchasingpower.autoflow.model.dto.ConversationMetricsResponse;
+import com.purchasingpower.autoflow.model.dto.CostAnalysisResponse;
 import com.purchasingpower.autoflow.model.metrics.AgentPerformanceStats;
 import com.purchasingpower.autoflow.model.metrics.LLMCallMetrics;
 import com.purchasingpower.autoflow.service.LLMMetricsService;
@@ -124,34 +126,7 @@ public class LLMMetricsController {
         dashboard.put("timestamp", now);
         
         // Add more dashboard stats as needed
-        
+
         return ResponseEntity.ok(dashboard);
-    }
-
-    // ================================================================
-    // RESPONSE DTOs
-    // ================================================================
-
-    @lombok.Data
-    @lombok.Builder
-    @lombok.NoArgsConstructor
-    @lombok.AllArgsConstructor
-    public static class ConversationMetricsResponse {
-        private String conversationId;
-        private int totalCalls;
-        private long totalTokens;
-        private double totalCost;
-        private double averageLatencyMs;
-        private List<LLMCallMetrics> calls;
-    }
-
-    @lombok.Data
-    @lombok.Builder
-    @lombok.NoArgsConstructor
-    @lombok.AllArgsConstructor
-    public static class CostAnalysisResponse {
-        private LocalDateTime startTime;
-        private LocalDateTime endTime;
-        private double totalCost;
     }
 }

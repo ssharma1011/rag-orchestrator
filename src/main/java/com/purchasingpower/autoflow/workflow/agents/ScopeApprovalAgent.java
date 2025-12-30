@@ -3,6 +3,7 @@ package com.purchasingpower.autoflow.workflow.agents;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.purchasingpower.autoflow.client.GeminiClient;
+import com.purchasingpower.autoflow.model.agent.ApprovalResult;
 import com.purchasingpower.autoflow.service.PromptService;
 import com.purchasingpower.autoflow.workflow.state.AgentDecision;
 import com.purchasingpower.autoflow.workflow.state.ChatMessage;
@@ -92,13 +93,13 @@ public class ScopeApprovalAgent {
                 state.getConversationId()
             );
             log.info("🎯 LLM interpretation: approved={}, type={}",
-                    result.approved, result.approvalType);
+                    result.isApproved(), result.getApprovalType());
 
-            if (result.approved && "full".equals(result.approvalType)) {
+            if (result.isApproved() && "full".equals(result.getApprovalType())) {
                 log.info("✅ Full approval - proceeding to context builder");
                 updates.put("lastAgentDecision", AgentDecision.proceed());
 
-            } else if (result.approved && "partial".equals(result.approvalType)) {
+            } else if (result.isApproved() && "partial".equals(result.getApprovalType())) {
                 log.info("🔧 Partial approval with modifications requested");
                 updates.put("lastAgentDecision", AgentDecision.askDev(
                     "🔧 **Modifications Requested**\n\n" +
@@ -169,19 +170,21 @@ public class ScopeApprovalAgent {
         // Parse JSON response
         JsonNode root = objectMapper.readTree(jsonResponse);
 
-        ApprovalResult result = new ApprovalResult();
-        result.approved = root.path("approved").asBoolean(false);
-        result.approvalType = root.path("approvalType").asText("rejected");
-        result.confidence = root.path("confidence").asDouble(0.0);
+        ApprovalResult.ApprovalResultBuilder builder = ApprovalResult.builder()
+                .approved(root.path("approved").asBoolean(false))
+                .approvalType(root.path("approvalType").asText("rejected"))
+                .confidence(root.path("confidence").asDouble(0.0));
 
         if (root.has("modifiedScope")) {
-            result.modifiedScope = objectMapper.convertValue(
+            builder.modifiedScope(objectMapper.convertValue(
                 root.get("modifiedScope"),
                 Map.class
-            );
+            ));
         }
 
-        log.info("🤖 LLM confidence: {}", String.format("%.0f%%", result.confidence * 100));
+        ApprovalResult result = builder.build();
+
+        log.info("🤖 LLM confidence: {}", String.format("%.0f%%", result.getConfidence() * 100));
 
         return result;
     }
@@ -210,15 +213,5 @@ public class ScopeApprovalAgent {
             );
         }
         return sb.toString();
-    }
-
-    /**
-     * Structured approval result from LLM.
-     */
-    private static class ApprovalResult {
-        boolean approved;
-        String approvalType;  // "full", "partial", "rejected"
-        double confidence;
-        Map<String, Object> modifiedScope;
     }
 }

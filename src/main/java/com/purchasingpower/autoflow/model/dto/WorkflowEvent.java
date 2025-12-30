@@ -1,6 +1,7 @@
 package com.purchasingpower.autoflow.model.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.purchasingpower.autoflow.model.WorkflowStatus;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -74,31 +75,6 @@ public class WorkflowEvent {
      * Additional metadata (optional).
      */
     private Object metadata;
-
-    /**
-     * Workflow execution status enum.
-     */
-    public enum WorkflowStatus {
-        /**
-         * Workflow is currently running.
-         */
-        RUNNING,
-
-        /**
-         * Workflow completed successfully.
-         */
-        COMPLETED,
-
-        /**
-         * Workflow failed with an error.
-         */
-        FAILED,
-
-        /**
-         * Workflow paused (waiting for user input).
-         */
-        PAUSED
-    }
 
     // ================================================================
     // Builder Helpers

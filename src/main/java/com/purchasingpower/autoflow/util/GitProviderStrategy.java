@@ -1,5 +1,7 @@
 package com.purchasingpower.autoflow.util;
 
+import com.purchasingpower.autoflow.model.git.ParsedGitUrl;
+
 /**
  * Strategy interface for Git provider URL parsing.
  *
@@ -42,5 +44,5 @@ public interface GitProviderStrategy {
      * @return Parsed components (repoUrl, branch, repoName)
      * @throws IllegalArgumentException if URL cannot be parsed
      */
-    GitUrlParser.ParsedGitUrl parse(String url);
+    ParsedGitUrl parse(String url);
 }

@@ -1,6 +1,7 @@
 package com.purchasingpower.autoflow.workflow.agents;
 
 import com.purchasingpower.autoflow.configuration.AppProperties;
+import com.purchasingpower.autoflow.model.git.ParsedGitUrl;
 import com.purchasingpower.autoflow.model.neo4j.ParsedCodeGraph;
 import com.purchasingpower.autoflow.model.sync.EmbeddingSyncResult;
 import com.purchasingpower.autoflow.model.sync.SyncType;
@@ -56,7 +57,7 @@ public class CodeIndexerAgent {
             Map<String, Object> updates = new HashMap<>(state.toMap());
 
             // Parse Git URL to extract clean repo URL and branch
-            GitUrlParser.ParsedGitUrl parsed = gitUrlParser.parse(state.getRepoUrl());
+            ParsedGitUrl parsed = gitUrlParser.parse(state.getRepoUrl());
             String cleanRepoUrl = parsed.getRepoUrl();
             String branch = parsed.getBranch();
             String repoName = parsed.getRepoName();

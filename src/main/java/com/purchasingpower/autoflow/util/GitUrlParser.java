@@ -1,9 +1,8 @@
 package com.purchasingpower.autoflow.util;
 
 import com.purchasingpower.autoflow.config.GitProvidersConfig;
+import com.purchasingpower.autoflow.model.git.ParsedGitUrl;
 import jakarta.annotation.PostConstruct;
-import lombok.AllArgsConstructor;
-import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -98,30 +97,5 @@ public class GitUrlParser {
                 url, result.getRepoUrl(), result.getBranch(), result.getRepoName());
 
         return result;
-    }
-
-    /**
-     * Parsed Git URL components.
-     */
-    @Data
-    @AllArgsConstructor
-    public static class ParsedGitUrl {
-        /**
-         * Clean repository URL (without branch references).
-         * Example: "https://github.com/user/repo"
-         */
-        private String repoUrl;
-
-        /**
-         * Branch name (defaults to "main" if not specified).
-         * Example: "feature/my-branch"
-         */
-        private String branch;
-
-        /**
-         * Repository name (last path segment).
-         * Example: "repo"
-         */
-        private String repoName;
     }
 }

@@ -1,6 +1,7 @@
 package com.purchasingpower.autoflow.util;
 
 import com.purchasingpower.autoflow.config.GitProvidersConfig;
+import com.purchasingpower.autoflow.model.git.ParsedGitUrl;
 import lombok.RequiredArgsConstructor;
 
 /**
@@ -66,7 +67,7 @@ public class ConfigurableGitProviderStrategy implements GitProviderStrategy {
         }
 
         String repoName = extractRepoName(repoUrl);
-        return new GitUrlParser.ParsedGitUrl(repoUrl, branch, repoName);
+        return new ParsedGitUrl(repoUrl, branch, repoName);
     }
 
     /**

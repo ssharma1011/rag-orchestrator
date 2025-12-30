@@ -5,6 +5,7 @@ import com.google.protobuf.Value;
 import com.purchasingpower.autoflow.model.neo4j.ClassNode;
 import com.purchasingpower.autoflow.model.neo4j.MethodNode;
 import com.purchasingpower.autoflow.model.neo4j.FieldNode;
+import com.purchasingpower.autoflow.model.retrieval.HybridRetrievalResult;
 import com.purchasingpower.autoflow.storage.Neo4jGraphStore;
 import io.pinecone.unsigned_indices_model.QueryResponseWithUnsignedIndices;
 import io.pinecone.unsigned_indices_model.ScoredVectorWithUnsignedIndices;
@@ -112,34 +113,5 @@ public class HybridRetriever {
     private boolean isHierarchyQuery(String query) {
         String q = query.toLowerCase();
         return q.contains("subclass") || q.contains("extend") || q.contains("implement");
-    }
-
-    public static class HybridRetrievalResult {
-        private final Map<String, ClassNode> classes = new LinkedHashMap<>();
-        private final Map<String, MethodNode> methods = new LinkedHashMap<>();
-        private final Map<String, FieldNode> fields = new LinkedHashMap<>();
-
-        public void addClass(ClassNode node) { classes.put(node.getId(), node); }
-        public void addMethod(MethodNode node) { methods.put(node.getId(), node); }
-        public void addField(FieldNode node) { fields.put(node.getId(), node); }
-
-        public boolean hasClass(String id) { return classes.containsKey(id); }
-        public boolean hasMethod(String id) { return methods.containsKey(id); }
-
-        public List<ClassNode> getClasses() { return new ArrayList<>(classes.values()); }
-        public List<MethodNode> getMethods() { return new ArrayList<>(methods.values()); }
-        public List<FieldNode> getFields() { return new ArrayList<>(fields.values()); }
-
-        public String toContextString() {
-            StringBuilder sb = new StringBuilder("=== CODE CONTEXT ===\n\n");
-            for (ClassNode c : classes.values()) sb.append("Class: ").append(c.getName()).append("\n");
-            return sb.toString();
-        }
-
-        public String getFullSourceCode() {
-            StringBuilder sb = new StringBuilder();
-            for (ClassNode c : classes.values()) sb.append(c.getSourceCode()).append("\n");
-            return sb.toString();
-        }
     }
 }

@@ -3,6 +3,7 @@ package com.purchasingpower.autoflow.client;
 import com.google.protobuf.Struct;
 import com.google.protobuf.Value;
 import com.purchasingpower.autoflow.configuration.AppProperties;
+import com.purchasingpower.autoflow.model.retrieval.CodeContext;
 import io.pinecone.clients.Pinecone;
 import io.pinecone.unsigned_indices_model.QueryResponseWithUnsignedIndices;
 import io.pinecone.unsigned_indices_model.ScoredVectorWithUnsignedIndices;
@@ -239,17 +240,4 @@ public class PineconeRetriever {
                 content
         );
     }
-
-    /**
-     * Simple record to hold structured code context.
-     */
-    public record CodeContext(
-            String id,
-            float score,
-            String chunkType,
-            String className,
-            String methodName,
-            String filePath,
-            String content
-    ) {}
 }

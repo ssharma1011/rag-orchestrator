@@ -4,6 +4,8 @@ import com.purchasingpower.autoflow.client.GeminiClient;
 import com.purchasingpower.autoflow.client.PineconeRetriever;
 import com.purchasingpower.autoflow.config.AgentConfig;
 import com.purchasingpower.autoflow.model.WorkflowStatus;
+import com.purchasingpower.autoflow.model.git.ParsedGitUrl;
+import com.purchasingpower.autoflow.model.retrieval.CodeContext;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
 import com.purchasingpower.autoflow.util.GitUrlParser;
@@ -58,11 +60,11 @@ public class DocumentationAgent {
             List<Double> queryEmbedding = geminiClient.createEmbedding(requirement);
 
             // ✅ FIX: Parse URL correctly to extract repo name (handles /tree/branch URLs)
-            GitUrlParser.ParsedGitUrl parsed = gitUrlParser.parse(state.getRepoUrl());
+            ParsedGitUrl parsed = gitUrlParser.parse(state.getRepoUrl());
             String repoName = parsed.getRepoName();
 
             // Search Pinecone
-            List<PineconeRetriever.CodeContext> relevantCode =
+            List<CodeContext> relevantCode =
                     pineconeRetriever.findRelevantCodeStructured(queryEmbedding, repoName);
 
             log.info("Found {} relevant code chunks from Pinecone", relevantCode.size());
@@ -107,7 +109,7 @@ public class DocumentationAgent {
                                 };
 
                                 // ✅ Fixed: Correct CodeContext constructor (id, score, chunkType, className, methodName, filePath, content)
-                                return new PineconeRetriever.CodeContext(
+                                return new CodeContext(
                                         node.getNodeId(),
                                         score,
                                         node.getType().toString(),
@@ -172,7 +174,7 @@ public class DocumentationAgent {
     private String buildPromptFromTemplate(
             String requirement,
             RequirementAnalysis analysis,
-            List<PineconeRetriever.CodeContext> relevantCode) {
+            List<CodeContext> relevantCode) {
 
         Map<String, Object> variables = new HashMap<>();
 
@@ -207,7 +209,7 @@ public class DocumentationAgent {
      *
      * Logs warnings if response appears generic or ungrounded.
      */
-    private void validateResponseQuality(String response, List<PineconeRetriever.CodeContext> relevantCode) {
+    private void validateResponseQuality(String response, List<CodeContext> relevantCode) {
         if (relevantCode.isEmpty()) {
             // No code was provided - response should acknowledge this
             if (!response.contains("No Code Found") &&
@@ -220,7 +222,7 @@ public class DocumentationAgent {
         } else {
             // Code was provided - response should reference specific classes/methods
             Set<String> actualClasses = relevantCode.stream()
-                    .map(PineconeRetriever.CodeContext::className)
+                    .map(CodeContext::className)
                     .filter(name -> name != null && !name.isEmpty())
                     .collect(Collectors.toSet());
 

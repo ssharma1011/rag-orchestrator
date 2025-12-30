@@ -4,7 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.purchasingpower.autoflow.client.GeminiClient;
 import com.purchasingpower.autoflow.client.PineconeRetriever;
 import com.purchasingpower.autoflow.config.ScopeDiscoveryConfig;
+import com.purchasingpower.autoflow.model.agent.MethodMatch;
+import com.purchasingpower.autoflow.model.agent.ScopeProposalDTO;
 import com.purchasingpower.autoflow.model.graph.GraphNode;
+import com.purchasingpower.autoflow.model.retrieval.CodeContext;
 import com.purchasingpower.autoflow.repository.GraphNodeRepository;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
@@ -82,8 +85,6 @@ public class ScopeDiscoveryAgent {
     // Key: className, Value: List of (methodName, score, content)
     private final Map<String, List<MethodMatch>> methodMatches = new HashMap<>();
 
-    private record MethodMatch(String methodName, float score, String content, String chunkType) {}
-
     private List<GraphNode> findCandidateClasses(RequirementAnalysis req, String repoName) {
         Set<GraphNode> candidates = new HashSet<>();
         methodMatches.clear(); // Reset for each execution
@@ -132,14 +133,14 @@ public class ScopeDiscoveryAgent {
         List<Double> requirementEmbedding = geminiClient.createEmbedding(req.getSummary());
         log.info("   ✅ Created embedding vector (dimension: {})", requirementEmbedding.size());
 
-        List<PineconeRetriever.CodeContext> semanticMatches =
+        List<CodeContext> semanticMatches =
                 pineconeRetriever.findRelevantCodeStructured(requirementEmbedding, repoName);
         log.info("   ✅ Pinecone returned {} semantic matches", semanticMatches.size());
 
         if (!semanticMatches.isEmpty()) {
             log.info("   Top matches from Pinecone:");
             for (int i = 0; i < Math.min(5, semanticMatches.size()); i++) {
-                PineconeRetriever.CodeContext match = semanticMatches.get(i);
+                CodeContext match = semanticMatches.get(i);
                 log.info("      {}. {} (score: {}, class: {})",
                         i+1, match.id(), match.score(), match.className());
             }
@@ -153,7 +154,7 @@ public class ScopeDiscoveryAgent {
         // Calculate adaptive threshold using score gap analysis
         double adaptiveThreshold = calculateAdaptiveThreshold(semanticMatches);
 
-        List<PineconeRetriever.CodeContext> filteredMatches = semanticMatches.stream()
+        List<CodeContext> filteredMatches = semanticMatches.stream()
                 .filter(m -> m.score() >= adaptiveThreshold)
                 .limit(MAX_CHUNKS)
                 .toList();
@@ -165,7 +166,7 @@ public class ScopeDiscoveryAgent {
         int pineconeMatchesFound = 0;
         Set<String> processedClasses = new HashSet<>();  // Track unique classes
 
-        for (PineconeRetriever.CodeContext match : filteredMatches) {
+        for (CodeContext match : filteredMatches) {
             // Pinecone stores METHOD/FIELD chunks with IDs like:
             // "repo:com.package.ClassName.methodName"
             // Extract class name from chunk ID (PineconeRetriever may not populate className field)
@@ -513,7 +514,7 @@ public class ScopeDiscoveryAgent {
      * - Scores: [0.75, 0.73, 0.71, 0.70] → threshold ~0.70 (no clear gap, take top N)
      * - Scores: [0.45, 0.44, 0.42] → threshold 0.5 (all below min, use minimum)
      */
-    private double calculateAdaptiveThreshold(List<PineconeRetriever.CodeContext> matches) {
+    private double calculateAdaptiveThreshold(List<CodeContext> matches) {
         if (matches == null || matches.isEmpty()) {
             return 0.5; // Default minimum
         }
@@ -624,14 +625,5 @@ public class ScopeDiscoveryAgent {
         }
 
         return purpose.toString();
-    }
-
-    private static class ScopeProposalDTO {
-        public List<String> filesToModify = new ArrayList<>();
-        public List<String> filesToCreate = new ArrayList<>();
-        public List<String> testsToUpdate = new ArrayList<>();
-        public String reasoning;
-        public int estimatedComplexity;
-        public List<String> risks;
     }
 }

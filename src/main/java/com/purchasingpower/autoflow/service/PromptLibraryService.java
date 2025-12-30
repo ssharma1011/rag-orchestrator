@@ -1,11 +1,11 @@
 package com.purchasingpower.autoflow.service;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.github.mustachejava.DefaultMustacheFactory;
 import com.github.mustachejava.Mustache;
 import com.github.mustachejava.MustacheFactory;
+import com.purchasingpower.autoflow.model.prompt.PromptTemplate;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
@@ -92,37 +92,5 @@ public class PromptLibraryService {
      */
     public PromptTemplate getTemplate(String name) {
         return templates.get(name);
-    }
-
-    /**
-     * YAML structure
-     */
-    @JsonIgnoreProperties(ignoreUnknown = true)  // Allow extra fields like "examples" for documentation
-    public static class PromptTemplate {
-        private String name;
-        private String version;
-        private String model;
-        private double temperature;
-        private String systemPrompt;
-        private String userPrompt;
-
-        // Getters/setters
-        public String getName() { return name; }
-        public void setName(String name) { this.name = name; }
-
-        public String getVersion() { return version; }
-        public void setVersion(String version) { this.version = version; }
-
-        public String getModel() { return model; }
-        public void setModel(String model) { this.model = model; }
-
-        public double getTemperature() { return temperature; }
-        public void setTemperature(double temperature) { this.temperature = temperature; }
-
-        public String getSystemPrompt() { return systemPrompt; }
-        public void setSystemPrompt(String systemPrompt) { this.systemPrompt = systemPrompt; }
-
-        public String getUserPrompt() { return userPrompt; }
-        public void setUserPrompt(String userPrompt) { this.userPrompt = userPrompt; }
     }
 }

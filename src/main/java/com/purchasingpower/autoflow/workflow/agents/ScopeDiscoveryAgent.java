@@ -160,7 +160,7 @@ public class ScopeDiscoveryAgent {
                 adaptiveThreshold, semanticMatches.size());
         log.info("   🔍 Filtered to {} high-relevance matches", filteredMatches.size());
 
-        int pineconeMatchesFound = 0;
+        int neo4jMatchesFound = 0;
         Set<String> processedClasses = new HashSet<>();  // Track unique classes
 
         for (CodeContext match : filteredMatches) {
@@ -209,7 +209,7 @@ public class ScopeDiscoveryAgent {
                 if (!nodes.isEmpty()) {
                     candidates.addAll(nodes);
                     processedClasses.add(className);  // Mark as processed
-                    pineconeMatchesFound += nodes.size();
+                    neo4jMatchesFound += nodes.size();
 
                     // CRITICAL: Track method-level information
                     if (methodName != null && !methodName.isEmpty()) {

@@ -2,7 +2,6 @@ package com.purchasingpower.autoflow.workflow.agents;
 
 import com.purchasingpower.autoflow.config.AgentConfig;
 import com.purchasingpower.autoflow.model.neo4j.ClassNode;
-import com.purchasingpower.autoflow.query.HybridRetriever;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.storage.Neo4jGraphStore;
 import com.purchasingpower.autoflow.util.GitUrlParser;
@@ -25,7 +24,6 @@ import java.util.stream.Collectors;
 public class ContextBuilderAgent {
 
     private final Neo4jGraphStore neo4jStore;
-    private final HybridRetriever hybridRetriever;
     private final GitOperationsService gitService;
     private final AgentConfig agentConfig;
     private final GitUrlParser gitUrlParser;

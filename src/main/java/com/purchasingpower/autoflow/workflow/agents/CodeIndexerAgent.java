@@ -3,11 +3,8 @@ package com.purchasingpower.autoflow.workflow.agents;
 import com.purchasingpower.autoflow.configuration.AppProperties;
 import com.purchasingpower.autoflow.model.git.ParsedGitUrl;
 import com.purchasingpower.autoflow.model.neo4j.ParsedCodeGraph;
-import com.purchasingpower.autoflow.model.sync.EmbeddingSyncResult;
-import com.purchasingpower.autoflow.model.sync.SyncType;
 import com.purchasingpower.autoflow.parser.EntityExtractor;
 import com.purchasingpower.autoflow.service.GitOperationsService;
-import com.purchasingpower.autoflow.service.IncrementalEmbeddingSyncService;
 import com.purchasingpower.autoflow.service.MavenBuildService;
 import com.purchasingpower.autoflow.storage.Neo4jGraphStore;
 import com.purchasingpower.autoflow.util.GitInputValidator;
@@ -32,8 +29,9 @@ import java.util.stream.Stream;
 /**
  * CodeIndexerAgent - Indexes repository code for RAG retrieval.
  *
- * Uses IncrementalEmbeddingSyncService for smart Pinecone updates.
+ * ✅ UPDATED: Now uses Neo4j-only indexing (removed Pinecone).
  * Uses EntityExtractor + Neo4jGraphStore for knowledge graph.
+ * Syncs to Oracle CODE_NODES table for backward compatibility.
  */
 @Slf4j
 @Component
@@ -42,7 +40,6 @@ public class CodeIndexerAgent {
 
     private final GitOperationsService gitService;
     private final MavenBuildService buildService;
-    private final IncrementalEmbeddingSyncService embeddingSyncService;
     private final EntityExtractor entityExtractor;
     private final Neo4jGraphStore neo4jGraphStore;
     private final com.purchasingpower.autoflow.repository.GraphNodeRepository graphNodeRepository;
@@ -64,51 +61,7 @@ public class CodeIndexerAgent {
 
             log.info("Parsed URL: repo={}, branch={}, name={}", cleanRepoUrl, branch, repoName);
 
-            // ================================================================
-            // CRITICAL OPTIMIZATION: Skip indexing if already indexed at current commit
-            // ================================================================
-
-            // Check current commit in repo (before cloning) - use clean URL
-            String currentCommit = getCurrentCommitFromRemote(cleanRepoUrl, branch);
-            String lastIndexedCommit = embeddingSyncService.getLastIndexedCommit(repoName);
-
-            if (lastIndexedCommit != null && lastIndexedCommit.equals(currentCommit)) {
-                log.info("🚀 OPTIMIZATION: Repository already indexed at current commit {}!",
-                        currentCommit.substring(0, 8));
-                log.info("   ⏭️  Skipping: Clone, Build, Re-indexing");
-                log.info("   💰 Time saved: ~120 seconds");
-
-                // Still need workspace for reading files during code generation
-                File workspace = getOrCloneWorkspace(cleanRepoUrl, branch, repoName);
-                updates.put("workspaceDir", workspace.getAbsolutePath());
-
-                // Create a skipped result
-                IndexingResult skippedResult = IndexingResult.builder()
-                        .success(true)
-                        .filesProcessed(0)
-                        .chunksCreated(0)
-                        .graphNodesCreated(0)
-                        .graphEdgesCreated(0)
-                        .indexedCommit(lastIndexedCommit)
-                        .indexType(IndexingResult.IndexType.SKIPPED)
-                        .errors(new ArrayList<>())
-                        .durationMs(0L)
-                        .build();
-
-                updates.put("indexingResult", skippedResult);
-                updates.put("lastAgentDecision", AgentDecision.proceed(
-                        "Using cached index - no code changes since last indexing"
-                ));
-
-                return updates;
-            }
-
-            log.info("📥 New commit detected or first index - proceeding with full indexing");
-            if (lastIndexedCommit != null) {
-                log.info("   Previous: {}", lastIndexedCommit.substring(0, 8));
-                log.info("   Current:  {}", currentCommit.substring(0, 8));
-            }
-
+            log.info("📥 Proceeding with repository indexing");
             // ================================================================
             // OPTIMIZATION: Skip build for documentation tasks
             // ================================================================
@@ -158,62 +111,7 @@ public class CodeIndexerAgent {
             }
 
             // ================================================================
-            // STEP 3: PINECONE INCREMENTAL SYNC
-            // ================================================================
-
-            log.info("🔄 Syncing embeddings to Pinecone...");
-            EmbeddingSyncResult syncResult = embeddingSyncService.syncEmbeddings(workspace, repoName);
-
-            log.info("✅ Pinecone sync complete:");
-            log.info("   Type: {}", syncResult.getSyncType());
-            log.info("   Files analyzed: {}", syncResult.getFilesAnalyzed());
-            log.info("   Files changed: {}", syncResult.getFilesChanged());
-            log.info("   Chunks created: {}", syncResult.getChunksCreated());
-            log.info("   Chunks deleted: {}", syncResult.getChunksDeleted());
-            log.info("   Duration: {}ms", syncResult.getTotalTimeMs());
-
-            // CRITICAL: Handle Pinecone sync failures intelligently
-            // ✅ Fixed: SyncType is a separate class, not nested in EmbeddingSyncResult
-            if (syncResult.getSyncType() == SyncType.ERROR) {
-                // Reuse the analysis variable from line 110 (already defined)
-
-                // For CODE CHANGES: Fail fast (need semantic search for quality)
-                if (analysis != null && analysis.isModifiesCode()) {
-                    log.error("❌ Pinecone sync failed for code modification - CANNOT PROCEED");
-                    log.error("   Reason: Need semantic search for quality code generation");
-
-                    // ✅ Fixed: EmbeddingSyncResult has no getErrors() method
-                    IndexingResult errorResult = IndexingResult.builder()
-                            .success(false)
-                            .errors(List.of("Pinecone sync failed - check logs for details"))
-                            .indexType(IndexingResult.IndexType.FULL)
-                            .build();
-
-                    String errorMessage = "❌ **Cannot Proceed with Code Changes**\n\n" +
-                            "Pinecone embedding sync failed, which means we cannot perform semantic code search.\n\n" +
-                            "**Why this matters for code changes:**\n" +
-                            "- Without semantic search, we might miss important patterns\n" +
-                            "- Code quality would be significantly degraded\n" +
-                            "- Risk of creating broken PRs that waste developer time\n\n" +
-                            "**What to do:**\n" +
-                            "1. Check Pinecone service status\n" +
-                            "2. Review application logs for error details\n" +
-                            "3. Try again once Pinecone is healthy\n\n" +
-                            "Check the logs for more information about the failure.";
-
-                    updates.put("indexingResult", errorResult);
-                    updates.put("lastAgentDecision", AgentDecision.error(errorMessage));
-                    return updates;
-                }
-
-                // For READ-ONLY (Documentation): Degrade gracefully
-                log.warn("⚠️ Pinecone sync failed but continuing for read-only query");
-                log.warn("   Fallback: Will use Neo4j graph + Oracle entities instead");
-                // Continue to Neo4j/Oracle sync - DocumentationAgent will handle fallback
-            }
-
-            // ================================================================
-            // STEP 4: NEO4J GRAPH UPDATE
+            // STEP 3: NEO4J GRAPH UPDATE
             // ================================================================
 
             log.info("🔄 Updating Neo4j code graph...");
@@ -253,7 +151,7 @@ public class CodeIndexerAgent {
             log.info("   Relationships: {}", combinedGraph.getRelationships().size());
 
             // ================================================================
-            // STEP 4.5: ORACLE CODE_NODES TABLE SYNC
+            // STEP 4: ORACLE CODE_NODES TABLE SYNC
             // ================================================================
 
             log.info("🔄 Syncing to Oracle CODE_NODES table...");

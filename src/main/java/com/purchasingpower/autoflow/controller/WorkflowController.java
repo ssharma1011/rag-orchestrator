@@ -1,7 +1,9 @@
 package com.purchasingpower.autoflow.controller;
 
+import com.purchasingpower.autoflow.model.conversation.Conversation;
 import com.purchasingpower.autoflow.model.dto.WorkflowHistoryResponse;
 import com.purchasingpower.autoflow.model.dto.*;
+import com.purchasingpower.autoflow.service.ConversationService;
 import com.purchasingpower.autoflow.service.WorkflowExecutionService;
 import com.purchasingpower.autoflow.workflow.state.ChatMessage;
 import com.purchasingpower.autoflow.workflow.state.WorkflowState;
@@ -16,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * REST controller for workflow operations.
@@ -30,6 +33,7 @@ import java.util.Map;
 public class WorkflowController {
 
     private final WorkflowExecutionService workflowService;
+    private final ConversationService conversationService;
 
     /**
      * Start a new workflow.
@@ -161,6 +165,9 @@ public class WorkflowController {
 
     /**
      * Get conversation history.
+     *
+     * FIXED: Conversation history is stored in CONVERSATION_MESSAGES table,
+     * not in WORKFLOW_STATES.state_json. Must fetch from ConversationService.
      */
     @GetMapping("/{conversationId}/history")
     public ResponseEntity<WorkflowHistoryResponse> getHistory(@PathVariable String conversationId) {
@@ -168,9 +175,19 @@ public class WorkflowController {
             WorkflowState state = workflowService.getWorkflowState(conversationId);
             if (state == null) return ResponseEntity.notFound().build();
 
+            // ✅ FIX: Get conversation history from ConversationService (CONVERSATION_MESSAGES table)
+            // NOT from WorkflowState (which only has JSON snapshot in WORKFLOW_STATES table)
+            Optional<Conversation> conversation = conversationService.getConversationWithMessages(conversationId);
+
+            List<ChatMessage> messages = conversation
+                    .map(c -> c.getMessages().stream()
+                            .map(m -> new ChatMessage(m.getRole(), m.getContent(), m.getTimestamp()))
+                            .toList())
+                    .orElse(List.of());
+
             WorkflowHistoryResponse history = WorkflowHistoryResponse.builder()
                     .conversationId(conversationId)
-                    .messages(state.getConversationHistory())
+                    .messages(messages)  // Use messages from CONVERSATION_MESSAGES table
                     .status(state.getWorkflowStatus().name())
                     .build();
 

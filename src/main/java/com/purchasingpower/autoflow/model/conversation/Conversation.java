@@ -76,10 +76,12 @@ public class Conversation {
 
     /**
      * Messages in this conversation (from CONVERSATION_MESSAGES table).
-     * Links to existing ConversationMessage entities via conversation_id_ref.
+     * Links to existing ConversationMessage entities via conversation_id.
+     *
+     * FIXED: Column name was "conversation_id_ref" but actual DB column is "conversation_id"
      */
     @OneToMany(cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    @JoinColumn(name = "conversation_id_ref")
+    @JoinColumn(name = "conversation_id")
     @OrderBy("timestamp ASC")
     private List<ConversationMessage> messages = new ArrayList<>();
 

@@ -343,52 +343,63 @@ public class AutoFlowWorkflow {
     }
 
     /**
+     * Node progress mapping (follows coding standards - no switch statements).
+     */
+    private static final Map<String, Double> NODE_PROGRESS = Map.ofEntries(
+            Map.entry("__start__", 0.0),
+            Map.entry("requirement_analyzer", 0.1),
+            Map.entry("log_analyzer", 0.2),
+            Map.entry("code_indexer", 0.3),
+            Map.entry("documentation_agent", 0.5),
+            Map.entry("scope_discovery", 0.4),
+            Map.entry("scope_approval", 0.5),
+            Map.entry("context_builder", 0.6),
+            Map.entry("code_generator", 0.7),
+            Map.entry("build_validator", 0.8),
+            Map.entry("test_runner", 0.85),
+            Map.entry("pr_reviewer", 0.9),
+            Map.entry("pr_creator", 0.95),
+            Map.entry("ask_developer", 0.99)
+    );
+
+    /**
+     * Node message mapping (follows coding standards - no switch statements).
+     */
+    private static final Map<String, String> NODE_MESSAGES = Map.ofEntries(
+            Map.entry("__start__", "🚀 Starting workflow..."),
+            Map.entry("requirement_analyzer", "📋 Analyzing your request..."),
+            Map.entry("log_analyzer", "📊 Analyzing error logs..."),
+            Map.entry("code_indexer", "📦 Indexing codebase (cloning, building, embedding)..."),
+            Map.entry("documentation_agent", "📚 Generating documentation..."),
+            Map.entry("scope_discovery", "🔍 Discovering code scope..."),
+            Map.entry("scope_approval", "✅ Reviewing scope proposal..."),
+            Map.entry("context_builder", "🧩 Building context for code generation..."),
+            Map.entry("code_generator", "⚙️ Generating code changes..."),
+            Map.entry("build_validator", "🔨 Validating build..."),
+            Map.entry("test_runner", "🧪 Running tests..."),
+            Map.entry("pr_reviewer", "👀 Reviewing PR..."),
+            Map.entry("pr_creator", "📝 Creating pull request...")
+    );
+
+    /**
      * Calculate workflow progress based on which node is executing.
      * This is a rough estimate to give users visibility into progress.
      */
     private double calculateProgress(String nodeName) {
-        return switch (nodeName) {
-            case "__start__" -> 0.0;
-            case "requirement_analyzer" -> 0.1;
-            case "log_analyzer" -> 0.2;
-            case "code_indexer" -> 0.3;
-            case "documentation_agent" -> 0.5;
-            case "scope_discovery" -> 0.4;
-            case "scope_approval" -> 0.5;
-            case "context_builder" -> 0.6;
-            case "code_generator" -> 0.7;
-            case "build_validator" -> 0.8;
-            case "test_runner" -> 0.85;
-            case "pr_reviewer" -> 0.9;
-            case "pr_creator" -> 0.95;
-            case "ask_developer" -> 0.99;
-            default -> 0.5;
-        };
+        return NODE_PROGRESS.getOrDefault(nodeName, 0.5);
     }
 
     /**
      * Get user-friendly message for the current agent execution.
      */
     private String getAgentMessage(String nodeName, WorkflowState state) {
-        return switch (nodeName) {
-            case "__start__" -> "🚀 Starting workflow...";
-            case "requirement_analyzer" -> "📋 Analyzing your request...";
-            case "log_analyzer" -> "📊 Analyzing error logs...";
-            case "code_indexer" -> "📦 Indexing codebase (cloning, building, embedding)...";
-            case "documentation_agent" -> "📚 Generating documentation...";
-            case "scope_discovery" -> "🔍 Discovering code scope...";
-            case "scope_approval" -> "✅ Reviewing scope proposal...";
-            case "context_builder" -> "🧩 Building context for code generation...";
-            case "code_generator" -> "⚙️ Generating code changes...";
-            case "build_validator" -> "🔨 Validating build...";
-            case "test_runner" -> "🧪 Running tests...";
-            case "pr_reviewer" -> "👀 Reviewing PR...";
-            case "pr_creator" -> "📝 Creating pull request...";
-            case "ask_developer" -> state.getLastAgentDecision() != null ?
+        // Special case: ask_developer uses dynamic message from state
+        if ("ask_developer".equals(nodeName)) {
+            return state.getLastAgentDecision() != null ?
                     state.getLastAgentDecision().getMessage() :
                     "⏸️ Waiting for user input...";
-            default -> "⚙️ Processing...";
-        };
+        }
+        return NODE_MESSAGES.getOrDefault(nodeName, "⚙️ Processing...");
     }
 
     private boolean shouldPause(WorkflowState state) {

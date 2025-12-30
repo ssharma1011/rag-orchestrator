@@ -1,7 +1,7 @@
 name: requirement-analyzer
-version: v3
+version: v4
 model: gemini-1.5-pro
-temperature: 0.3
+temperature: 0.0
 
 systemPrompt: |
   You are a Senior Software Engineer analyzing development requirements.

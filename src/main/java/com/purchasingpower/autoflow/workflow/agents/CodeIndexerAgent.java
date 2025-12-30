@@ -230,48 +230,31 @@ public class CodeIndexerAgent {
             log.info("✅ Oracle CODE_NODES table updated: {} nodes saved", graphNodes.size());
 
             // ================================================================
-            // STEP 5: BUILD INDEXING RESULT (USING ACTUAL FIELDS!)
+            // STEP 5: BUILD INDEXING RESULT
             // ================================================================
 
-            // Determine IndexType based on sync result
-            IndexingResult.IndexType indexType;
-            switch (syncResult.getSyncType()) {
-                case INITIAL_FULL_INDEX:
-                case FORCED_FULL_REINDEX:
-                    indexType = IndexingResult.IndexType.FULL;
-                    break;
-                case INCREMENTAL:
-                    indexType = IndexingResult.IndexType.INCREMENTAL;
-                    break;
-                case NO_CHANGES:
-                    indexType = IndexingResult.IndexType.SKIPPED;
-                    break;
-                default:
-                    indexType = IndexingResult.IndexType.FULL;
-            }
+            int totalNodes = combinedGraph.getClasses().size() +
+                           combinedGraph.getMethods().size() +
+                           combinedGraph.getFields().size();
 
             IndexingResult indexingResult = IndexingResult.builder()
                     .success(true)
-                    .filesProcessed(javaFiles.size())                      // ← Correct field name!
-                    .chunksCreated(syncResult.getChunksCreated())
-                    .graphNodesCreated(
-                            combinedGraph.getClasses().size() +
-                                    combinedGraph.getMethods().size() +
-                                    combinedGraph.getFields().size()
-                    )
+                    .filesProcessed(javaFiles.size())
+                    .chunksCreated(0)  // No longer tracking chunks (was Pinecone-specific)
+                    .graphNodesCreated(totalNodes)
                     .graphEdgesCreated(combinedGraph.getRelationships().size())
-                    .indexedCommit(syncResult.getToCommit())               // ← Git commit hash
-                    .indexType(indexType)                                   // ← Enum, not String!
+                    .indexedCommit(null)  // TODO: Get current git commit if needed
+                    .indexType(IndexingResult.IndexType.FULL)
                     .errors(parseErrors)
-                    .durationMs(syncResult.getTotalTimeMs())
+                    .durationMs(0L)  // TODO: Track duration if needed
                     .build();
 
             updates.put("indexingResult", indexingResult);
             updates.put("lastAgentDecision", AgentDecision.proceed(
-                    String.format("Indexed %d classes, %d methods (%s)",
+                    String.format("✅ Indexed %d classes, %d methods, %d fields to Neo4j + Oracle",
                             combinedGraph.getClasses().size(),
                             combinedGraph.getMethods().size(),
-                            indexType)
+                            combinedGraph.getFields().size())
             ));
 
             return updates;

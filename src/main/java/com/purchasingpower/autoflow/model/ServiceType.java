@@ -9,7 +9,6 @@ package com.purchasingpower.autoflow.model;
  * @see com.purchasingpower.autoflow.util.ExternalCallLogger
  */
 public enum ServiceType {
-    PINECONE("🔵", "Pinecone"),
     ORACLE("🟠", "Oracle"),
     NEO4J("🟢", "Neo4j"),
     GEMINI("🔴", "Gemini"),

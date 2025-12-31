@@ -421,7 +421,7 @@ public class Neo4jGraphStore {
     }
 
     /**
-     * Find class by Neo4j node ID (for linking with Pinecone metadata).
+     * Find class by Neo4j node ID.
      */
     public ClassNode findClassById(String id) {
         String cypher = "MATCH (c:Class {id: $id}) RETURN c";

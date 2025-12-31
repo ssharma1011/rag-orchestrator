@@ -83,10 +83,10 @@ public class ScopeDiscoveryConfig {
     private SimilarityConfig similarity;
 
     /**
-     * Configuration for vector similarity matching thresholds.
+     * Configuration for similarity matching thresholds.
      *
-     * <p>Used by the scope discovery agent when querying Pinecone for related code
-     * segments based on semantic similarity of embeddings.
+     * <p>Used by the scope discovery agent when querying for related code
+     * segments based on semantic similarity.
      */
     @Data
     public static class SimilarityConfig {

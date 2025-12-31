@@ -1,6 +1,8 @@
 package com.purchasingpower.autoflow.workflow.state;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.purchasingpower.autoflow.model.WorkflowStatus;
 import org.bsc.langgraph4j.state.AgentState;
 import java.io.File;
@@ -12,7 +14,7 @@ import java.util.Map;
 /**
  * WorkflowState for LangGraph4J workflow orchestration.
  *
- * CRITICAL FIX: All complex object getters now handle LinkedHashMap deserialization
+ * All complex object getters handle LinkedHashMap deserialization
  * that occurs when ObjectMapper loads state from database as Map.class.
  *
  * Extends AgentState and provides ALL setters used across the codebase:
@@ -23,7 +25,18 @@ import java.util.Map;
  */
 public class WorkflowState extends AgentState {
 
-    private static final ObjectMapper objectMapper = new ObjectMapper();
+    /**
+     * ObjectMapper configured with JavaTimeModule for proper LocalDateTime handling.
+     * This fixes conversation history deserialization issues.
+     */
+    private static final ObjectMapper objectMapper = createObjectMapper();
+
+    private static ObjectMapper createObjectMapper() {
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.registerModule(new JavaTimeModule());
+        mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        return mapper;
+    }
 
     public WorkflowState(Map<String, Object> initData) {
         super(initData);

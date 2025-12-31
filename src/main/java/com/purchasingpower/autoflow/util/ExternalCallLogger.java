@@ -8,7 +8,7 @@ import org.slf4j.Logger;
 import java.util.Map;
 
 /**
- * Unified logging utility for all external service calls (Pinecone, Oracle, Neo4j, LLM).
+ * Unified logging utility for all external service calls (Oracle, Neo4j, LLM).
  * Provides consistent, structured request/response logging.
  */
 @Slf4j

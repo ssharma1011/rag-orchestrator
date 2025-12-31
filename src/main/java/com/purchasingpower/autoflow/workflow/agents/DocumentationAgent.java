@@ -45,7 +45,7 @@ public class DocumentationAgent {
     private final AgentConfig agentConfig;
     private final GitUrlParser gitUrlParser;
 
-    // ✅ Dynamic retrieval components (using Neo4j, not Pinecone)
+    // Dynamic retrieval components (using Neo4j)
     private final RetrievalPlanner retrievalPlanner;
     private final DynamicRetrievalExecutor retrievalExecutor;
 

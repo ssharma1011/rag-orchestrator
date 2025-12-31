@@ -357,7 +357,7 @@ public class ScopeDiscoveryAgent {
         for (String path : dto.filesToModify) {
             GraphNode node = findNodeByPath(path, candidates);
             if (node != null) {
-                // CRITICAL: Populate target methods from Pinecone matches
+                // CRITICAL: Populate target methods from search matches
                 List<String> targetMethods = null;
                 String fqn = node.getFullyQualifiedName();
                 if (methodMatches.containsKey(fqn)) {

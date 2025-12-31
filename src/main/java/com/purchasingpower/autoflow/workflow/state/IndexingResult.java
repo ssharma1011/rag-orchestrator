@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Result of code indexing (Pinecone + Oracle)
+ * Result of code indexing to Neo4j.
  */
 @Data
 @Builder

@@ -29,7 +29,6 @@ import java.util.stream.Stream;
 /**
  * CodeIndexerAgent - Indexes repository code for RAG retrieval.
  *
- * ✅ UPDATED: Now uses Neo4j-only indexing (removed Pinecone).
  * Uses EntityExtractor + Neo4jGraphStore for knowledge graph.
  * Syncs to Oracle CODE_NODES table for backward compatibility.
  */
@@ -240,7 +239,7 @@ public class CodeIndexerAgent {
             IndexingResult indexingResult = IndexingResult.builder()
                     .success(true)
                     .filesProcessed(javaFiles.size())
-                    .chunksCreated(0)  // No longer tracking chunks (was Pinecone-specific)
+                    .chunksCreated(0)  // Chunks are stored in Neo4j
                     .graphNodesCreated(totalNodes)
                     .graphEdgesCreated(combinedGraph.getRelationships().size())
                     .indexedCommit(null)  // TODO: Get current git commit if needed

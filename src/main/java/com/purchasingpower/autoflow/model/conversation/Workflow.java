@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
  * Multiple workflows can exist within a single conversation.
  *
  * Example:
- * - Workflow 1: Goal = "Add retry logic to Pinecone calls"
+ * - Workflow 1: Goal = "Add retry logic to API calls"
  * - Workflow 2: Goal = "Change timeout to 10 seconds"
  * - Both belong to same Conversation
  *
@@ -46,7 +46,7 @@ public class Workflow {
 
     /**
      * What this workflow is trying to accomplish.
-     * Example: "Add retry logic to Pinecone calls"
+     * Example: "Add retry logic to API calls"
      */
     @Lob
     @Column(name = "goal", columnDefinition = "CLOB")

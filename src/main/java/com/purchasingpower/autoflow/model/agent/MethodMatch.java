@@ -1,14 +1,14 @@
 package com.purchasingpower.autoflow.model.agent;
 
 /**
- * Method-level match from Pinecone semantic search.
+ * Method-level match from code search.
  *
- * Tracks individual methods within classes that are semantically
+ * Tracks individual methods within classes that are
  * similar to the requirement, allowing for precise targeting
  * of code changes.
  *
  * @param methodName Name of the matched method
- * @param score Similarity score from Pinecone (0.0 to 1.0)
+ * @param score Similarity score (0.0 to 1.0)
  * @param content Method source code or description
  * @param chunkType Type of chunk (METHOD, FIELD, CLASS, etc.)
  *

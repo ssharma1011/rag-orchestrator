@@ -2,7 +2,9 @@ package com.purchasingpower.autoflow.client;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.purchasingpower.autoflow.config.GeminiConfig;
 import com.purchasingpower.autoflow.configuration.AppProperties;
+import com.purchasingpower.autoflow.model.ServiceType;
 import com.purchasingpower.autoflow.model.llm.CodeGenerationResponse;
 import com.purchasingpower.autoflow.model.metrics.LLMCallMetrics;
 import com.purchasingpower.autoflow.service.LLMMetricsService;
@@ -29,6 +31,7 @@ import java.util.UUID;
 public class GeminiClient {
 
     private final AppProperties props;
+    private final GeminiConfig geminiConfig;
     private final ObjectMapper objectMapper;
     private final PromptLibraryService promptLibrary;
     private final LLMMetricsService llmMetricsService;
@@ -37,8 +40,20 @@ public class GeminiClient {
 
     @PostConstruct
     public void init() {
+        // ✅ SECURITY FIX: Use header-based authentication instead of query parameters
+        // Old way: /{version}/models/{model}:{action}?key=API_KEY
+        //   - API key appears in server logs (access.log)
+        //   - API key appears in proxy logs
+        //   - API key appears in browser history
+        //   - API key may be cached by intermediaries
+        //
+        // New way: x-goog-api-key: API_KEY header
+        //   - API key only in request headers (not logged by default)
+        //   - Not visible in URLs
+        //   - More secure according to OAuth 2.0 / REST best practices
         this.geminiWebClient = WebClient.builder()
                 .baseUrl(props.getGemini().getBaseUrl())
+                .defaultHeader("x-goog-api-key", props.getGemini().getApiKey())  // ✅ Use header instead of query param
                 .exchangeStrategies(ExchangeStrategies.builder()
                         .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
                         .build())
@@ -46,8 +61,30 @@ public class GeminiClient {
     }
 
     private String getApiUrl(String model, String action) {
-        return String.format("/%s/models/%s:%s?key=%s",
-                props.getGemini().getApiVersion(), model, action, props.getGemini().getApiKey());
+        // ✅ SECURITY FIX: Remove API key from URL (now in header)
+        return String.format("/%s/models/%s:%s",
+                props.getGemini().getApiVersion(), model, action);
+    }
+
+    /**
+     * Build Retry spec from configuration.
+     * Uses exponential backoff with configurable attempts and delays.
+     *
+     * <p>This method creates a Retry specification based on the GeminiConfig retry settings,
+     * allowing retry behavior to be tuned per environment (dev, staging, prod) without code changes.
+     * The retry spec uses exponential backoff to progressively increase delay between retries,
+     * respecting the configured maximum backoff to prevent excessive wait times.
+     *
+     * @return configured Retry spec with exponential backoff
+     */
+    private Retry buildRetrySpec() {
+        GeminiConfig.RetryConfig retry = geminiConfig.getRetry();
+        return Retry.backoff(
+            retry.getMaxAttempts(),
+            Duration.ofSeconds(retry.getInitialBackoffSeconds())
+        )
+        .maxBackoff(Duration.ofSeconds(retry.getMaxBackoffSeconds()))
+        .filter(this::isRetryable);
     }
 
     public List<List<Double>> batchCreateEmbeddings(List<String> texts) {
@@ -72,7 +109,7 @@ public class GeminiClient {
         try {
             JsonNode response = geminiWebClient.post().uri(url).bodyValue(Map.of("requests", requests))
                     .retrieve().bodyToMono(JsonNode.class)
-                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(2)).filter(this::isRetryable)).block();
+                    .retryWhen(buildRetrySpec()).block();
 
             List<List<Double>> embeddings = new ArrayList<>();
             if (response != null && response.path("embeddings").isArray()) {
@@ -112,12 +149,12 @@ public class GeminiClient {
         String url = getApiUrl(model, "generateContent");
         Map<String, Object> body = Map.of(
                 "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
-                "generationConfig", Map.of("responseMimeType", "application/json", "temperature", 0.2));
+                "generationConfig", Map.of("responseMimeType", "application/json", "temperature", geminiConfig.getJsonTemperature()));
 
         try {
             String json = geminiWebClient.post().uri(url).bodyValue(body)
                     .retrieve().bodyToMono(String.class)
-                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(10)).filter(this::isRetryable)).block();
+                    .retryWhen(buildRetrySpec()).block();
             return parseResponse(json);
         } catch (Exception e) {
             log.error("Gemini Chat failed", e);
@@ -133,8 +170,27 @@ public class GeminiClient {
         return callChatApi(prompt, "generateText", null);
     }
 
+    /**
+     * Determines if an exception should trigger a retry based on configuration.
+     *
+     * <p>This method checks if the throwable is a WebClientResponseException with a status code
+     * that matches the configured retryable status codes (e.g., 429, 500, 502, 503, 504).
+     * Using configuration allows different retry behavior per environment (dev/staging/prod).
+     *
+     * @param ex the exception to check
+     * @return true if the exception should trigger a retry, false otherwise
+     */
     private boolean isRetryable(Throwable ex) {
-        return ex instanceof WebClientResponseException.TooManyRequests || ex instanceof WebClientResponseException.InternalServerError;
+        if (!(ex instanceof WebClientResponseException webEx)) {
+            return false;
+        }
+        GeminiConfig.RetryConfig retry = geminiConfig.getRetry();
+        if (retry.getRetryableStatusCodes() == null) {
+            // Fallback to common retryable codes if not configured
+            return webEx.getStatusCode().is5xxServerError() ||
+                   webEx.getStatusCode().value() == 429;
+        }
+        return retry.getRetryableStatusCodes().contains(webEx.getStatusCode().value());
     }
 
     private CodeGenerationResponse parseResponse(String rawJson) throws Exception {
@@ -166,7 +222,7 @@ public class GeminiClient {
      */
     public String callChatApi(String prompt, String agentName, String conversationId) {
         var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
-                com.purchasingpower.autoflow.util.ExternalCallLogger.ServiceType.GEMINI,
+                ServiceType.GEMINI,
                 "generateContent",
                 log
         );
@@ -182,9 +238,10 @@ public class GeminiClient {
                 "Prompt Length", prompt.length() + " chars",
                 "Prompt", com.purchasingpower.autoflow.util.ExternalCallLogger.truncate(prompt, 500));
 
+        double temperature = geminiConfig.getTemperatureForAgent(agentName);
         Map<String, Object> body = Map.of(
                 "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
-                "generationConfig", Map.of("temperature", 0.7)
+                "generationConfig", Map.of("temperature", temperature)
         );
 
         long startTime = System.currentTimeMillis();
@@ -196,18 +253,13 @@ public class GeminiClient {
                 .model(model)
                 .prompt(prompt)
                 .promptLength(prompt.length())
-                .temperature(0.7)
+                .temperature(temperature)
                 .build();
 
         try {
             String json = geminiWebClient.post().uri(url).bodyValue(body)
                     .retrieve().bodyToMono(String.class)
-                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(10))
-                            .filter(this::isRetryable)
-                            .doBeforeRetry(signal -> {
-                                log.warn("⚠️ Retrying (attempt {})", signal.totalRetries() + 1);
-                                metrics.setRetryCount((int) signal.totalRetries() + 1);
-                            }))
+                    .retryWhen(buildRetrySpec())
                     .block();
 
             long latency = System.currentTimeMillis() - startTime;

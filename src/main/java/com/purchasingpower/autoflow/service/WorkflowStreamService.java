@@ -1,6 +1,7 @@
 package com.purchasingpower.autoflow.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.purchasingpower.autoflow.model.WorkflowStatus;
 import com.purchasingpower.autoflow.model.dto.WorkflowEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -89,7 +90,7 @@ public class WorkflowStreamService {
             // Send initial connection success event
             WorkflowEvent initialEvent = WorkflowEvent.builder()
                     .conversationId(conversationId)
-                    .status(WorkflowEvent.WorkflowStatus.RUNNING)
+                    .status(WorkflowStatus.RUNNING)
                     .message("🔗 Connected to workflow stream")
                     .progress(0.0)
                     .build();

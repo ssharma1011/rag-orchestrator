@@ -2,6 +2,7 @@ package com.purchasingpower.autoflow.workflow.agents;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.purchasingpower.autoflow.client.GeminiClient;
+import com.purchasingpower.autoflow.config.AgentConfig;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,7 @@ public class RequirementAnalyzerAgent {
     private final GeminiClient geminiClient;
     private final PromptLibraryService promptLibrary;
     private final ObjectMapper objectMapper;
+    private final AgentConfig agentConfig;
 
     public Map<String, Object> execute(WorkflowState state) {
         log.info("🔍 Analyzing requirement: {}", state.getRequirement());
@@ -86,7 +88,7 @@ public class RequirementAnalyzerAgent {
             boolean isDocumentationTask = "documentation".equalsIgnoreCase(analysis.getTaskType());
 
             // Check confidence
-            if (analysis.getConfidence() < 0.7) {
+            if (analysis.getConfidence() < agentConfig.getRequirementAnalyzer().getMinConfidence()) {
                 log.warn("⚠️ Low confidence ({}) - requesting clarification",
                         String.format("%.0f%%", analysis.getConfidence() * 100));
 

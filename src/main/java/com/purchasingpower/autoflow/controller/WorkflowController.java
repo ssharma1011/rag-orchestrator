@@ -1,7 +1,9 @@
 package com.purchasingpower.autoflow.controller;
 
+import com.purchasingpower.autoflow.model.conversation.Conversation;
 import com.purchasingpower.autoflow.model.dto.WorkflowHistoryResponse;
 import com.purchasingpower.autoflow.model.dto.*;
+import com.purchasingpower.autoflow.service.ConversationService;
 import com.purchasingpower.autoflow.service.WorkflowExecutionService;
 import com.purchasingpower.autoflow.workflow.state.ChatMessage;
 import com.purchasingpower.autoflow.workflow.state.WorkflowState;
@@ -16,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * REST controller for workflow operations.
@@ -30,6 +33,7 @@ import java.util.Map;
 public class WorkflowController {
 
     private final WorkflowExecutionService workflowService;
+    private final ConversationService conversationService;
 
     /**
      * Start a new workflow.
@@ -55,6 +59,24 @@ public class WorkflowController {
                         .body(WorkflowResponse.error("Requirement is required. Please describe what you want to build or fix."));
             }
 
+            // ✅ FIX: Initialize conversation history with user's initial message
+            // This was the root cause - conversationHistory started empty!
+            List<ChatMessage> initialHistory = new ArrayList<>();
+            ChatMessage userMessage = new ChatMessage();
+            userMessage.setRole("user");
+            userMessage.setContent(request.getRequirement());
+            userMessage.setTimestamp(LocalDateTime.now());
+            initialHistory.add(userMessage);
+
+            // Add logs if provided
+            if (request.getLogsPasted() != null && !request.getLogsPasted().trim().isEmpty()) {
+                ChatMessage logsMessage = new ChatMessage();
+                logsMessage.setRole("user");
+                logsMessage.setContent("Logs:\n" + request.getLogsPasted());
+                logsMessage.setTimestamp(LocalDateTime.now());
+                initialHistory.add(logsMessage);
+            }
+
             WorkflowState initialState = WorkflowState.builder()
                     .requirement(request.getRequirement())
                     .repoUrl(request.getRepoUrl())
@@ -64,8 +86,13 @@ public class WorkflowController {
                     .userId(request.getUserId())
                     .build();
 
+            // Add conversation history to state (can't use builder for lists)
+            Map<String, Object> stateData = new HashMap<>(initialState.toMap());
+            stateData.put("conversationHistory", initialHistory);
+            WorkflowState stateWithHistory = WorkflowState.fromMap(stateData);
+
             // Start workflow asynchronously - returns immediately
-            WorkflowState runningState = workflowService.startWorkflow(initialState);
+            WorkflowState runningState = workflowService.startWorkflow(stateWithHistory);
 
             // Return 202 Accepted with friendly initial message
             // Override the message for initial response (workflow continues in background)
@@ -73,7 +100,7 @@ public class WorkflowController {
                     .body(WorkflowResponse.builder()
                             .success(true)
                             .conversationId(runningState.getConversationId())
-                            .status(runningState.getWorkflowStatus())
+                            .status(runningState.getWorkflowStatus().name())
                             .currentAgent(runningState.getCurrentAgent())
                             .message("🚀 **Working on your request...**\n\nI'm analyzing your requirements and will update you shortly.")
                             .awaitingUserInput(false)
@@ -161,6 +188,9 @@ public class WorkflowController {
 
     /**
      * Get conversation history.
+     *
+     * FIXED: Conversation history is stored in CONVERSATION_MESSAGES table,
+     * not in WORKFLOW_STATES.state_json. Must fetch from ConversationService.
      */
     @GetMapping("/{conversationId}/history")
     public ResponseEntity<WorkflowHistoryResponse> getHistory(@PathVariable String conversationId) {
@@ -168,10 +198,20 @@ public class WorkflowController {
             WorkflowState state = workflowService.getWorkflowState(conversationId);
             if (state == null) return ResponseEntity.notFound().build();
 
+            // ✅ FIX: Get conversation history from ConversationService (CONVERSATION_MESSAGES table)
+            // NOT from WorkflowState (which only has JSON snapshot in WORKFLOW_STATES table)
+            Optional<Conversation> conversation = conversationService.getConversationWithMessages(conversationId);
+
+            List<ChatMessage> messages = conversation
+                    .map(c -> c.getMessages().stream()
+                            .map(m -> new ChatMessage(m.getRole(), m.getContent(), m.getTimestamp()))
+                            .toList())
+                    .orElse(List.of());
+
             WorkflowHistoryResponse history = WorkflowHistoryResponse.builder()
                     .conversationId(conversationId)
-                    .messages(state.getConversationHistory())
-                    .status(state.getWorkflowStatus())
+                    .messages(messages)  // Use messages from CONVERSATION_MESSAGES table
+                    .status(state.getWorkflowStatus().name())
                     .build();
 
             return ResponseEntity.ok(history);

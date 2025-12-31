@@ -1,13 +1,13 @@
 package com.purchasingpower.autoflow.workflow.agents;
 
+import com.purchasingpower.autoflow.configuration.AppProperties;
+import com.purchasingpower.autoflow.model.git.ParsedGitUrl;
 import com.purchasingpower.autoflow.model.neo4j.ParsedCodeGraph;
-import com.purchasingpower.autoflow.model.sync.EmbeddingSyncResult;
-import com.purchasingpower.autoflow.model.sync.SyncType;
 import com.purchasingpower.autoflow.parser.EntityExtractor;
 import com.purchasingpower.autoflow.service.GitOperationsService;
-import com.purchasingpower.autoflow.service.IncrementalEmbeddingSyncService;
 import com.purchasingpower.autoflow.service.MavenBuildService;
 import com.purchasingpower.autoflow.storage.Neo4jGraphStore;
+import com.purchasingpower.autoflow.util.GitInputValidator;
 import com.purchasingpower.autoflow.util.GitUrlParser;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
@@ -29,8 +29,9 @@ import java.util.stream.Stream;
 /**
  * CodeIndexerAgent - Indexes repository code for RAG retrieval.
  *
- * Uses IncrementalEmbeddingSyncService for smart Pinecone updates.
+ * ✅ UPDATED: Now uses Neo4j-only indexing (removed Pinecone).
  * Uses EntityExtractor + Neo4jGraphStore for knowledge graph.
+ * Syncs to Oracle CODE_NODES table for backward compatibility.
  */
 @Slf4j
 @Component
@@ -39,10 +40,11 @@ public class CodeIndexerAgent {
 
     private final GitOperationsService gitService;
     private final MavenBuildService buildService;
-    private final IncrementalEmbeddingSyncService embeddingSyncService;
     private final EntityExtractor entityExtractor;
     private final Neo4jGraphStore neo4jGraphStore;
     private final com.purchasingpower.autoflow.repository.GraphNodeRepository graphNodeRepository;
+    private final AppProperties appProperties;
+    private final GitUrlParser gitUrlParser;
 
     @Transactional
     public Map<String, Object> execute(WorkflowState state) {
@@ -52,58 +54,14 @@ public class CodeIndexerAgent {
             Map<String, Object> updates = new HashMap<>(state.toMap());
 
             // Parse Git URL to extract clean repo URL and branch
-            GitUrlParser.ParsedGitUrl parsed = GitUrlParser.parse(state.getRepoUrl());
+            ParsedGitUrl parsed = gitUrlParser.parse(state.getRepoUrl());
             String cleanRepoUrl = parsed.getRepoUrl();
             String branch = parsed.getBranch();
             String repoName = parsed.getRepoName();
 
             log.info("Parsed URL: repo={}, branch={}, name={}", cleanRepoUrl, branch, repoName);
 
-            // ================================================================
-            // CRITICAL OPTIMIZATION: Skip indexing if already indexed at current commit
-            // ================================================================
-
-            // Check current commit in repo (before cloning) - use clean URL
-            String currentCommit = getCurrentCommitFromRemote(cleanRepoUrl, branch);
-            String lastIndexedCommit = embeddingSyncService.getLastIndexedCommit(repoName);
-
-            if (lastIndexedCommit != null && lastIndexedCommit.equals(currentCommit)) {
-                log.info("🚀 OPTIMIZATION: Repository already indexed at current commit {}!",
-                        currentCommit.substring(0, 8));
-                log.info("   ⏭️  Skipping: Clone, Build, Re-indexing");
-                log.info("   💰 Time saved: ~120 seconds");
-
-                // Still need workspace for reading files during code generation
-                File workspace = getOrCloneWorkspace(cleanRepoUrl, branch, repoName);
-                updates.put("workspaceDir", workspace.getAbsolutePath());
-
-                // Create a skipped result
-                IndexingResult skippedResult = IndexingResult.builder()
-                        .success(true)
-                        .filesProcessed(0)
-                        .chunksCreated(0)
-                        .graphNodesCreated(0)
-                        .graphEdgesCreated(0)
-                        .indexedCommit(lastIndexedCommit)
-                        .indexType(IndexingResult.IndexType.SKIPPED)
-                        .errors(new ArrayList<>())
-                        .durationMs(0L)
-                        .build();
-
-                updates.put("indexingResult", skippedResult);
-                updates.put("lastAgentDecision", AgentDecision.proceed(
-                        "Using cached index - no code changes since last indexing"
-                ));
-
-                return updates;
-            }
-
-            log.info("📥 New commit detected or first index - proceeding with full indexing");
-            if (lastIndexedCommit != null) {
-                log.info("   Previous: {}", lastIndexedCommit.substring(0, 8));
-                log.info("   Current:  {}", currentCommit.substring(0, 8));
-            }
-
+            log.info("📥 Proceeding with repository indexing");
             // ================================================================
             // OPTIMIZATION: Skip build for documentation tasks
             // ================================================================
@@ -153,62 +111,7 @@ public class CodeIndexerAgent {
             }
 
             // ================================================================
-            // STEP 3: PINECONE INCREMENTAL SYNC
-            // ================================================================
-
-            log.info("🔄 Syncing embeddings to Pinecone...");
-            EmbeddingSyncResult syncResult = embeddingSyncService.syncEmbeddings(workspace, repoName);
-
-            log.info("✅ Pinecone sync complete:");
-            log.info("   Type: {}", syncResult.getSyncType());
-            log.info("   Files analyzed: {}", syncResult.getFilesAnalyzed());
-            log.info("   Files changed: {}", syncResult.getFilesChanged());
-            log.info("   Chunks created: {}", syncResult.getChunksCreated());
-            log.info("   Chunks deleted: {}", syncResult.getChunksDeleted());
-            log.info("   Duration: {}ms", syncResult.getTotalTimeMs());
-
-            // CRITICAL: Handle Pinecone sync failures intelligently
-            // ✅ Fixed: SyncType is a separate class, not nested in EmbeddingSyncResult
-            if (syncResult.getSyncType() == SyncType.ERROR) {
-                // Reuse the analysis variable from line 110 (already defined)
-
-                // For CODE CHANGES: Fail fast (need semantic search for quality)
-                if (analysis != null && analysis.isModifiesCode()) {
-                    log.error("❌ Pinecone sync failed for code modification - CANNOT PROCEED");
-                    log.error("   Reason: Need semantic search for quality code generation");
-
-                    // ✅ Fixed: EmbeddingSyncResult has no getErrors() method
-                    IndexingResult errorResult = IndexingResult.builder()
-                            .success(false)
-                            .errors(List.of("Pinecone sync failed - check logs for details"))
-                            .indexType(IndexingResult.IndexType.FULL)
-                            .build();
-
-                    String errorMessage = "❌ **Cannot Proceed with Code Changes**\n\n" +
-                            "Pinecone embedding sync failed, which means we cannot perform semantic code search.\n\n" +
-                            "**Why this matters for code changes:**\n" +
-                            "- Without semantic search, we might miss important patterns\n" +
-                            "- Code quality would be significantly degraded\n" +
-                            "- Risk of creating broken PRs that waste developer time\n\n" +
-                            "**What to do:**\n" +
-                            "1. Check Pinecone service status\n" +
-                            "2. Review application logs for error details\n" +
-                            "3. Try again once Pinecone is healthy\n\n" +
-                            "Check the logs for more information about the failure.";
-
-                    updates.put("indexingResult", errorResult);
-                    updates.put("lastAgentDecision", AgentDecision.error(errorMessage));
-                    return updates;
-                }
-
-                // For READ-ONLY (Documentation): Degrade gracefully
-                log.warn("⚠️ Pinecone sync failed but continuing for read-only query");
-                log.warn("   Fallback: Will use Neo4j graph + Oracle entities instead");
-                // Continue to Neo4j/Oracle sync - DocumentationAgent will handle fallback
-            }
-
-            // ================================================================
-            // STEP 4: NEO4J GRAPH UPDATE
+            // STEP 3: NEO4J GRAPH UPDATE
             // ================================================================
 
             log.info("🔄 Updating Neo4j code graph...");
@@ -248,7 +151,7 @@ public class CodeIndexerAgent {
             log.info("   Relationships: {}", combinedGraph.getRelationships().size());
 
             // ================================================================
-            // STEP 4.5: ORACLE CODE_NODES TABLE SYNC
+            // STEP 4: ORACLE CODE_NODES TABLE SYNC
             // ================================================================
 
             log.info("🔄 Syncing to Oracle CODE_NODES table...");
@@ -327,54 +230,58 @@ public class CodeIndexerAgent {
             log.info("✅ Oracle CODE_NODES table updated: {} nodes saved", graphNodes.size());
 
             // ================================================================
-            // STEP 5: BUILD INDEXING RESULT (USING ACTUAL FIELDS!)
+            // STEP 5: BUILD INDEXING RESULT
             // ================================================================
 
-            // Determine IndexType based on sync result
-            IndexingResult.IndexType indexType;
-            switch (syncResult.getSyncType()) {
-                case INITIAL_FULL_INDEX:
-                case FORCED_FULL_REINDEX:
-                    indexType = IndexingResult.IndexType.FULL;
-                    break;
-                case INCREMENTAL:
-                    indexType = IndexingResult.IndexType.INCREMENTAL;
-                    break;
-                case NO_CHANGES:
-                    indexType = IndexingResult.IndexType.SKIPPED;
-                    break;
-                default:
-                    indexType = IndexingResult.IndexType.FULL;
-            }
+            int totalNodes = combinedGraph.getClasses().size() +
+                           combinedGraph.getMethods().size() +
+                           combinedGraph.getFields().size();
 
             IndexingResult indexingResult = IndexingResult.builder()
                     .success(true)
-                    .filesProcessed(javaFiles.size())                      // ← Correct field name!
-                    .chunksCreated(syncResult.getChunksCreated())
-                    .graphNodesCreated(
-                            combinedGraph.getClasses().size() +
-                                    combinedGraph.getMethods().size() +
-                                    combinedGraph.getFields().size()
-                    )
+                    .filesProcessed(javaFiles.size())
+                    .chunksCreated(0)  // No longer tracking chunks (was Pinecone-specific)
+                    .graphNodesCreated(totalNodes)
                     .graphEdgesCreated(combinedGraph.getRelationships().size())
-                    .indexedCommit(syncResult.getToCommit())               // ← Git commit hash
-                    .indexType(indexType)                                   // ← Enum, not String!
+                    .indexedCommit(null)  // TODO: Get current git commit if needed
+                    .indexType(IndexingResult.IndexType.FULL)
                     .errors(parseErrors)
-                    .durationMs(syncResult.getTotalTimeMs())
+                    .durationMs(0L)  // TODO: Track duration if needed
                     .build();
 
             updates.put("indexingResult", indexingResult);
             updates.put("lastAgentDecision", AgentDecision.proceed(
-                    String.format("Indexed %d classes, %d methods (%s)",
+                    String.format("✅ Indexed %d classes, %d methods, %d fields to Neo4j + Oracle",
                             combinedGraph.getClasses().size(),
                             combinedGraph.getMethods().size(),
-                            indexType)
+                            combinedGraph.getFields().size())
             ));
 
             return updates;
 
         } catch (Exception e) {
             log.error("Code indexing failed", e);
+
+            // ✅ FIX: Explicitly rollback transaction to prevent data loss
+            // Problem: We catch exceptions to show user-friendly errors, but this prevents
+            // Spring's automatic rollback (which only happens on uncaught exceptions).
+            // Solution: Mark transaction for rollback explicitly before returning.
+            //
+            // Data loss scenario without this fix:
+            // 1. deleteByRepoName() succeeds → old nodes deleted
+            // 2. saveAll() fails → exception thrown
+            // 3. Exception caught here → transaction commits (!)
+            // 4. Result: Old nodes deleted, new nodes not saved → DATA LOSS
+            try {
+                org.springframework.transaction.interceptor.TransactionAspectSupport
+                        .currentTransactionStatus()
+                        .setRollbackOnly();
+                log.debug("Transaction marked for rollback");
+            } catch (Exception txEx) {
+                // No active transaction (e.g., in tests) - that's okay
+                log.debug("No active transaction to rollback: {}", txEx.getMessage());
+            }
+
             Map<String, Object> updates = new HashMap<>(state.toMap());
 
             // Return error result
@@ -433,7 +340,7 @@ public class CodeIndexerAgent {
      */
     private File getOrCloneWorkspace(String repoUrl, String branch, String repoName) {
         // Define workspace location
-        String workspaceBase = System.getProperty("user.home") + "/ai-workspace";
+        String workspaceBase = appProperties.getWorkspaceDir();
         File workspace = new File(workspaceBase, repoName);
 
         // Check if workspace exists and is valid Git repo
@@ -445,6 +352,11 @@ public class CodeIndexerAgent {
                 // Pull latest changes using git command
                 try {
                     log.info("Pulling latest changes...");
+
+                    // ✅ SECURITY: Validate branch name to prevent command injection
+                    // Attack example: branch = "main; rm -rf /" → would execute malicious command
+                    GitInputValidator.validateBranchName(branch);
+
                     ProcessBuilder pb = new ProcessBuilder("git", "pull", "origin", branch);
                     pb.directory(workspace);
                     pb.redirectErrorStream(true);
@@ -477,6 +389,14 @@ public class CodeIndexerAgent {
     private String getCurrentCommitFromRemote(String repoUrl, String branch) {
         try {
             log.debug("Querying remote commit for branch: {}", branch);
+
+            // ✅ SECURITY: Validate inputs to prevent command injection
+            // Attack examples:
+            // - repoUrl = "https://github.com/user/repo; rm -rf /"
+            // - branch = "main && curl http://evil.com"
+            GitInputValidator.validateRepoUrl(repoUrl);
+            GitInputValidator.validateBranchName(branch);
+
             ProcessBuilder pb = new ProcessBuilder(
                     "git", "ls-remote", repoUrl, "refs/heads/" + branch
             );

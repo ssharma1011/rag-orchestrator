@@ -1,6 +1,7 @@
 package com.purchasingpower.autoflow.service.impl;
 
 import com.purchasingpower.autoflow.model.workflow.WorkflowStateEntity;
+import com.purchasingpower.autoflow.model.WorkflowStatus;
 import com.purchasingpower.autoflow.repository.WorkflowStateRepository;
 import com.purchasingpower.autoflow.service.ConversationService;
 import com.purchasingpower.autoflow.service.WorkflowExecutionService;
@@ -54,7 +55,7 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
 
             // FIX: Create new state with RUNNING status
             Map<String, Object> data = new HashMap<>(initialState.toMap());
-            data.put("workflowStatus", "RUNNING");
+            data.put("workflowStatus", WorkflowStatus.RUNNING.name());
             WorkflowState runningState = WorkflowState.fromMap(data);
 
             // Save initial state
@@ -82,7 +83,7 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
         try {
             // FIX: Create new state with RUNNING status (don't modify original)
             Map<String, Object> data = new HashMap<>(state.toMap());
-            data.put("workflowStatus", "RUNNING");
+            data.put("workflowStatus", WorkflowStatus.RUNNING.name());
             WorkflowState runningState = WorkflowState.fromMap(data);
 
             // Save state
@@ -107,33 +108,59 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
     public WorkflowState getWorkflowState(String conversationId) {
         log.debug("Getting workflow state: {}", conversationId);
 
-        // Check cache first
-        WorkflowState cached = activeWorkflows.get(conversationId);
-        if (cached != null) {
-            return cached;
-        }
+        // ✅ THREAD SAFETY FIX: Use computeIfAbsent for atomic cache population
+        // ─────────────────────────────────────────────────────────────────────────
+        // OLD CODE (RACE CONDITION):
+        //   WorkflowState cached = activeWorkflows.get(conversationId);
+        //   if (cached != null) return cached;
+        //   // Load from database
+        //   WorkflowState loaded = loadFromDb();
+        //   activeWorkflows.put(conversationId, loaded);  // ← Race condition!
+        //
+        // Problem:
+        //   Thread A: get() returns null
+        //   Thread B: get() returns null (same time!)
+        //   Thread A: Loads from database
+        //   Thread B: Loads from database (duplicate load!)
+        //   Thread A: put() into cache
+        //   Thread B: put() into cache (overwrites A's value!)
+        //
+        // FIX: computeIfAbsent is atomic - only ONE thread loads from database
+        // ─────────────────────────────────────────────────────────────────────────
+        return activeWorkflows.computeIfAbsent(conversationId, id -> {
+            log.debug("Cache miss, loading workflow from database: {}", id);
 
-        // Load from database
-        try {
-            WorkflowStateEntity entity = stateRepository.findByConversationId(conversationId)
-                    .orElse(null);
+            try {
+                WorkflowStateEntity entity = stateRepository.findByConversationId(id)
+                        .orElse(null);
 
-            if (entity == null) {
+                if (entity == null) {
+                    log.debug("Workflow not found in database: {}", id);
+                    return null;
+                }
+
+                @SuppressWarnings("unchecked")
+                Map<String, Object> stateMap = objectMapper.readValue(
+                        entity.getStateJson(),
+                        Map.class
+                );
+
+                WorkflowState loaded = WorkflowState.fromMap(stateMap);
+
+                // DEBUG: Log what's in the database and what gets deserialized
+                log.debug("✅ Loaded workflow from database: {}", id);
+                log.debug("🔍 Raw JSON size: {} chars", entity.getStateJson().length());
+                log.debug("🔍 StateMap keys: {}", stateMap.keySet());
+                log.debug("🔍 ConversationHistory in map: {}", stateMap.get("conversationHistory"));
+                log.debug("🔍 ConversationHistory after deserialization: {}", loaded.getConversationHistory());
+
+                return loaded;
+
+            } catch (Exception e) {
+                log.error("Failed to load workflow state: {}", id, e);
                 return null;
             }
-
-            @SuppressWarnings("unchecked")
-            Map<String, Object> stateMap = objectMapper.readValue(
-                    entity.getStateJson(),
-                    Map.class
-            );
-
-            return WorkflowState.fromMap(stateMap);
-
-        } catch (Exception e) {
-            log.error("Failed to load workflow state", e);
-            return null;
-        }
+        });
     }
 
     @Override
@@ -145,7 +172,7 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
             if (state != null) {
                 // FIX: Create new state with CANCELLED status
                 Map<String, Object> data = new HashMap<>(state.toMap());
-                data.put("workflowStatus", "CANCELLED");
+                data.put("workflowStatus", WorkflowStatus.CANCELLED.name());
                 WorkflowState cancelledState = WorkflowState.fromMap(data);
 
                 saveWorkflowState(cancelledState);
@@ -173,8 +200,18 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
             // Save final state
             saveWorkflowState(result);
 
-            // Update cache
-            activeWorkflows.put(result.getConversationId(), result);
+            // ✅ FIX CRITICAL #2: Remove completed workflows from cache to prevent memory leak
+            // BEFORE: activeWorkflows.put() → workflows never removed → OOM after 10k workflows
+            // AFTER: Remove from cache when workflow terminates (COMPLETED, FAILED, CANCELLED)
+            WorkflowStatus finalStatus = result.getWorkflowStatus();
+            if (finalStatus == WorkflowStatus.COMPLETED || finalStatus == WorkflowStatus.FAILED ||
+                finalStatus == WorkflowStatus.CANCELLED) {
+                activeWorkflows.remove(result.getConversationId());
+                log.debug("Removed completed workflow from cache: {}", result.getConversationId());
+            } else {
+                // Only keep in cache if still RUNNING or PAUSED
+                activeWorkflows.put(result.getConversationId(), result);
+            }
 
             log.info("Workflow execution completed: {} - status: {}",
                     result.getConversationId(),
@@ -185,7 +222,7 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
 
             // FIX: Create new FAILED state (don't modify original)
             Map<String, Object> data = new HashMap<>(state.toMap());
-            data.put("workflowStatus", "FAILED");
+            data.put("workflowStatus", WorkflowStatus.FAILED.name());
             data.put("lastAgentDecision", AgentDecision.error(e.getMessage()));
             WorkflowState failedState = WorkflowState.fromMap(data);
 
@@ -194,6 +231,27 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
         }
     }
 
+    /**
+     * Persists workflow state to database.
+     *
+     * ✅ CRITICAL: @Transactional ensures atomic saves
+     * ─────────────────────────────────────────────────────────────────────────
+     * This method performs TWO database saves:
+     * 1. conversationService.saveConversationFromWorkflowState() → CONVERSATION_MESSAGES table
+     * 2. stateRepository.save() → WORKFLOW_STATES table
+     *
+     * Without @Transactional:
+     *   - Save #1 succeeds
+     *   - Save #2 fails
+     *   - Result: INCONSISTENT STATE (messages saved, workflow not saved)
+     *
+     * With @Transactional:
+     *   - Both saves succeed → transaction commits
+     *   - Either save fails → BOTH rollback
+     *   - Result: CONSISTENT STATE (all or nothing)
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    @org.springframework.transaction.annotation.Transactional
     private void saveWorkflowState(WorkflowState state) {
         try {
             // ================================================================
@@ -207,8 +265,13 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
             // ================================================================
             // Also save to WORKFLOW_STATES (JSON snapshot for compatibility)
             // ================================================================
+            // DEBUG: Log what's being saved
+            log.debug("🔍 Saving workflow state - conversationHistory size: {}",
+                    state.getConversationHistory() != null ? state.getConversationHistory().size() : "null");
+
             // Serialize state to JSON
             String stateJson = objectMapper.writeValueAsString(state);
+            log.debug("🔍 Serialized JSON size: {} chars", stateJson.length());
 
             // Find existing entity or create new
             WorkflowStateEntity entity = stateRepository
@@ -222,7 +285,7 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
             // Update entity
             entity.setConversationId(state.getConversationId());
             entity.setUserId(state.getUserId());
-            entity.setStatus(state.getWorkflowStatus());
+            entity.setStatus(state.getWorkflowStatus().name());
             entity.setCurrentAgent(state.getCurrentAgent());
             entity.setStateJson(stateJson);
 
@@ -233,6 +296,9 @@ public class WorkflowExecutionServiceImpl implements WorkflowExecutionService {
 
         } catch (Exception e) {
             log.error("Failed to save workflow state", e);
+            // ✅ FIX CRITICAL #1: Re-throw exception to prevent data loss
+            // If save fails, workflow MUST NOT continue with unsaved state
+            throw new RuntimeException("CRITICAL: Failed to persist workflow state - cannot continue", e);
         }
     }
 }

@@ -59,8 +59,18 @@ public interface GraphNodeRepository extends JpaRepository<GraphNode, Long> {
 
     /**
      * Delete all nodes for a repository (for re-indexing).
+     *
+     * IMPORTANT: Uses bulk DELETE query for performance and atomicity.
+     * Derived delete methods (deleteByRepoName) execute SELECT + N individual DELETEs (slow!).
+     * This custom query executes a single bulk DELETE (fast!).
+     *
+     * @Modifying tells Spring this modifies data (not a SELECT)
+     * @Transactional ensures atomicity with surrounding operations
      */
-    void deleteByRepoName(String repoName);
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("DELETE FROM GraphNode n WHERE n.repoName = :repoName")
+    void deleteByRepoName(@Param("repoName") String repoName);
 
     /**
      * Count total nodes in a repository.

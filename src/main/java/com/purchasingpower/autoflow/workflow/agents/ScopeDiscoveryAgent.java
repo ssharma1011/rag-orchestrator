@@ -2,12 +2,17 @@ package com.purchasingpower.autoflow.workflow.agents;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.purchasingpower.autoflow.client.GeminiClient;
-import com.purchasingpower.autoflow.client.PineconeRetriever;
+import com.purchasingpower.autoflow.config.ScopeDiscoveryConfig;
+import com.purchasingpower.autoflow.model.agent.MethodMatch;
+import com.purchasingpower.autoflow.model.agent.ScopeProposalDTO;
 import com.purchasingpower.autoflow.model.graph.GraphNode;
+import com.purchasingpower.autoflow.model.retrieval.CodeContext;
 import com.purchasingpower.autoflow.repository.GraphNodeRepository;
+import com.purchasingpower.autoflow.service.CypherQueryService;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
 import com.purchasingpower.autoflow.service.graph.GraphTraversalService;
+import com.purchasingpower.autoflow.util.GitUrlParser;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,21 +25,22 @@ import java.util.*;
 @RequiredArgsConstructor
 public class ScopeDiscoveryAgent {
 
-    private static final int MAX_FILES = 7;
-
+    private final ScopeDiscoveryConfig config;
     private final GraphNodeRepository graphRepo;
     private final GraphTraversalService graphTraversal;
-    private final PineconeRetriever pineconeRetriever;
+    private final CypherQueryService cypherQueryService;
     private final GeminiClient geminiClient;
     private final PromptLibraryService promptLibrary;
     private final ObjectMapper objectMapper;
     private final GitOperationsService gitService;
+    private final GitUrlParser gitUrlParser;
 
     public Map<String, Object> execute(WorkflowState state) {
         log.info("🔍 Discovering scope for: {}", state.getRequirement());
 
         RequirementAnalysis req = state.getRequirementAnalysis();
-        String repoName = gitService.extractRepoName(state.getRepoUrl());
+        // ✅ FIX: Parse URL correctly to extract repo name (handles /tree/branch URLs)
+        String repoName = gitUrlParser.parse(state.getRepoUrl()).getRepoName();
 
         try {
             List<GraphNode> candidates = findCandidateClasses(req, repoName);
@@ -52,14 +58,14 @@ public class ScopeDiscoveryAgent {
             }
 
             ScopeProposal proposal = analyzeScope(req, candidates, repoName);
-            
+
             Map<String, Object> updates = new HashMap<>(state.toMap());
             updates.put("scopeProposal", proposal);
 
             int totalFiles = proposal.getTotalFileCount();
-            if (totalFiles > MAX_FILES) {
+            if (totalFiles > config.getMaxFiles()) {
                 updates.put("lastAgentDecision", AgentDecision.askDev(
-                    "⚠️ **Scope Too Large**\nProposed " + totalFiles + " files. Limit is " + MAX_FILES + "."
+                    "⚠️ **Scope Too Large**\nProposed " + totalFiles + " files. Limit is " + config.getMaxFiles() + "."
                 ));
                 return updates;
             }
@@ -75,11 +81,9 @@ public class ScopeDiscoveryAgent {
         }
     }
 
-    // Track method-level matches from Pinecone
+    // Track method-level matches from Neo4j search
     // Key: className, Value: List of (methodName, score, content)
     private final Map<String, List<MethodMatch>> methodMatches = new HashMap<>();
-
-    private record MethodMatch(String methodName, float score, String content, String chunkType) {}
 
     private List<GraphNode> findCandidateClasses(RequirementAnalysis req, String repoName) {
         Set<GraphNode> candidates = new HashSet<>();
@@ -122,21 +126,18 @@ public class ScopeDiscoveryAgent {
             candidates.addAll(domainClasses);
         }
 
-        // Strategy 2: Semantic search in Pinecone
-        log.info("\n🔎 Strategy 2: Semantic search in Pinecone...");
-        log.info("   Embedding requirement: '{}'", req.getSummary());
+        // Strategy 2: Full-text search in Neo4j
+        log.info("\n🔎 Strategy 2: Full-text search in Neo4j...");
+        log.info("   Searching for: '{}'", req.getSummary());
 
-        List<Double> requirementEmbedding = geminiClient.createEmbedding(req.getSummary());
-        log.info("   ✅ Created embedding vector (dimension: {})", requirementEmbedding.size());
-
-        List<PineconeRetriever.CodeContext> semanticMatches =
-                pineconeRetriever.findRelevantCodeStructured(requirementEmbedding, repoName);
-        log.info("   ✅ Pinecone returned {} semantic matches", semanticMatches.size());
+        List<CodeContext> semanticMatches =
+                cypherQueryService.fullTextSearch(repoName, req.getSummary(), config.getMaxChunks());
+        log.info("   ✅ Neo4j returned {} matches", semanticMatches.size());
 
         if (!semanticMatches.isEmpty()) {
-            log.info("   Top matches from Pinecone:");
+            log.info("   Top matches from Neo4j:");
             for (int i = 0; i < Math.min(5, semanticMatches.size()); i++) {
-                PineconeRetriever.CodeContext match = semanticMatches.get(i);
+                CodeContext match = semanticMatches.get(i);
                 log.info("      {}. {} (score: {}, class: {})",
                         i+1, match.id(), match.score(), match.className());
             }
@@ -144,13 +145,13 @@ public class ScopeDiscoveryAgent {
 
         // CRITICAL FILTER: Use adaptive threshold based on score distribution
         // This prevents irrelevant classes while adapting to different codebases
-        final int MAX_CLASSES = 3;  // Limit to top 3 most relevant classes
-        final int MAX_CHUNKS = 10;   // Process max 10 chunks
+        final int MAX_CLASSES = config.getMaxClasses();  // Limit to top 3 most relevant classes
+        final int MAX_CHUNKS = config.getMaxChunks();   // Process max 10 chunks
 
         // Calculate adaptive threshold using score gap analysis
         double adaptiveThreshold = calculateAdaptiveThreshold(semanticMatches);
 
-        List<PineconeRetriever.CodeContext> filteredMatches = semanticMatches.stream()
+        List<CodeContext> filteredMatches = semanticMatches.stream()
                 .filter(m -> m.score() >= adaptiveThreshold)
                 .limit(MAX_CHUNKS)
                 .toList();
@@ -159,13 +160,13 @@ public class ScopeDiscoveryAgent {
                 adaptiveThreshold, semanticMatches.size());
         log.info("   🔍 Filtered to {} high-relevance matches", filteredMatches.size());
 
-        int pineconeMatchesFound = 0;
+        int neo4jMatchesFound = 0;
         Set<String> processedClasses = new HashSet<>();  // Track unique classes
 
-        for (PineconeRetriever.CodeContext match : filteredMatches) {
-            // Pinecone stores METHOD/FIELD chunks with IDs like:
+        for (CodeContext match : filteredMatches) {
+            // Neo4j search returns METHOD/FIELD chunks with IDs like:
             // "repo:com.package.ClassName.methodName"
-            // Extract class name from chunk ID (PineconeRetriever may not populate className field)
+            // Extract class name from chunk ID if not populated
 
             String className = match.className();
             if (className == null || className.isEmpty()) {
@@ -208,7 +209,7 @@ public class ScopeDiscoveryAgent {
                 if (!nodes.isEmpty()) {
                     candidates.addAll(nodes);
                     processedClasses.add(className);  // Mark as processed
-                    pineconeMatchesFound += nodes.size();
+                    neo4jMatchesFound += nodes.size();
 
                     // CRITICAL: Track method-level information
                     if (methodName != null && !methodName.isEmpty()) {
@@ -279,7 +280,8 @@ public class ScopeDiscoveryAgent {
                     data.put("purpose", purpose);
 
                     // FIXED: Get actual dependencies from graph edges
-                    List<String> dependencies = graphTraversalService.findDirectDependencies(
+                    // ✅ FIX: Variable is graphTraversal, not graphTraversalService
+                    List<String> dependencies = graphTraversal.findDirectDependencies(
                                     node.getNodeId(), repoName)
                             .stream()
                             .map(depId -> {
@@ -287,7 +289,7 @@ public class ScopeDiscoveryAgent {
                                 int lastDot = depId.lastIndexOf('.');
                                 return lastDot >= 0 ? depId.substring(lastDot + 1) : depId;
                             })
-                            .limit(5)  // Limit to top 5 for readability
+                            .limit(config.getMaxDependencies())  // Limit to top 5 for readability
                             .toList();
                     data.put("dependencies", dependencies.isEmpty() ? "None" : String.join(", ", dependencies));
 
@@ -420,7 +422,7 @@ public class ScopeDiscoveryAgent {
     }
 
     /**
-     * Extract class name from Pinecone chunk ID.
+     * Extract class name from Neo4j chunk ID.
      * Format: "repo:com.package.ClassName.methodName" → "com.package.ClassName"
      * Format: "repo:com.package.ClassName" → "com.package.ClassName"
      */
@@ -509,20 +511,20 @@ public class ScopeDiscoveryAgent {
      * - Scores: [0.75, 0.73, 0.71, 0.70] → threshold ~0.70 (no clear gap, take top N)
      * - Scores: [0.45, 0.44, 0.42] → threshold 0.5 (all below min, use minimum)
      */
-    private double calculateAdaptiveThreshold(List<PineconeRetriever.CodeContext> matches) {
+    private double calculateAdaptiveThreshold(List<CodeContext> matches) {
         if (matches == null || matches.isEmpty()) {
             return 0.5; // Default minimum
         }
 
-        final double MIN_THRESHOLD = 0.5;  // Never go below 50% similarity
-        final double MAX_THRESHOLD = 0.8;  // Never be stricter than 80%
-        final int MIN_MATCHES = 3;          // Always consider at least top 3
-        final double SIGNIFICANT_GAP = 0.15; // Gap of 15% is significant
+        final double MIN_THRESHOLD = config.getSimilarity().getMinThreshold();  // Never go below 50% similarity
+        final double MAX_THRESHOLD = config.getSimilarity().getMaxThreshold();  // Never be stricter than 80%
+        final int MIN_MATCHES = config.getSimilarity().getMinMatches();          // Always consider at least top 3
+        final double SIGNIFICANT_GAP = config.getSimilarity().getSignificantGap(); // Gap of 15% is significant
 
         // If we have very few matches, just use minimum threshold
         if (matches.size() <= MIN_MATCHES) {
             double topScore = matches.get(0).score();
-            return Math.max(MIN_THRESHOLD, topScore * 0.7); // 70% of top score
+            return Math.max(MIN_THRESHOLD, topScore * config.getSimilarity().getTopScoreMultiplier()); // 70% of top score
         }
 
         // Find the largest score gap in top 10 matches
@@ -547,7 +549,7 @@ public class ScopeDiscoveryAgent {
         } else {
             // No significant gap - use relative threshold (70% of top score)
             double topScore = matches.get(0).score();
-            threshold = topScore * 0.7;
+            threshold = topScore * config.getSimilarity().getTopScoreMultiplier();
             log.debug("   📊 No significant gap found, using 70% of top score ({:.3f})", topScore);
         }
 
@@ -620,14 +622,5 @@ public class ScopeDiscoveryAgent {
         }
 
         return purpose.toString();
-    }
-
-    private static class ScopeProposalDTO {
-        public List<String> filesToModify = new ArrayList<>();
-        public List<String> filesToCreate = new ArrayList<>();
-        public List<String> testsToUpdate = new ArrayList<>();
-        public String reasoning;
-        public int estimatedComplexity;
-        public List<String> risks;
     }
 }

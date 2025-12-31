@@ -98,7 +98,7 @@ public class Neo4jGraphStore {
 
     public void storeCodeGraph(ParsedCodeGraph graph) {
         var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
-                com.purchasingpower.autoflow.util.ExternalCallLogger.ServiceType.NEO4J,
+                com.purchasingpower.autoflow.model.ServiceType.NEO4J,
                 "StoreCodeGraph",
                 log
         );
@@ -110,7 +110,8 @@ public class Neo4jGraphStore {
                 "Relationships", graph.getTotalRelationships());
 
         try (Session session = driver.session()) {
-            session.writeTransaction(tx -> {
+            // ✅ FIX: Use executeWrite instead of deprecated writeTransaction
+            session.executeWrite(tx -> {
                 for (ClassNode classNode : graph.getClasses()) {
                     storeClassNode(tx, classNode);
                 }
@@ -134,7 +135,8 @@ public class Neo4jGraphStore {
         }
     }
 
-    private void storeClassNode(Transaction tx, ClassNode classNode) {
+    // ✅ FIX: Changed from Transaction to TransactionContext for new Neo4j API
+    private void storeClassNode(org.neo4j.driver.TransactionContext tx, ClassNode classNode) {
         String cypher = """
             MERGE (c:Class {id: $id})
             SET c.name = $name,
@@ -179,7 +181,7 @@ public class Neo4jGraphStore {
         tx.run(cypher, params);
     }
 
-    private void storeMethodNode(Transaction tx, MethodNode methodNode) {
+    private void storeMethodNode(org.neo4j.driver.TransactionContext tx, MethodNode methodNode) {
         String cypher = """
             MERGE (m:Method {id: $id})
             SET m.name = $name,
@@ -225,7 +227,7 @@ public class Neo4jGraphStore {
         tx.run(cypher, params);
     }
 
-    private void storeFieldNode(Transaction tx, FieldNode fieldNode) {
+    private void storeFieldNode(org.neo4j.driver.TransactionContext tx, FieldNode fieldNode) {
         String cypher = """
             MERGE (f:Field {id: $id})
             SET f.name = $name,
@@ -265,14 +267,34 @@ public class Neo4jGraphStore {
         tx.run(cypher, params);
     }
 
-    private void storeRelationship(Transaction tx, CodeRelationship rel) {
+    private void storeRelationship(org.neo4j.driver.TransactionContext tx, CodeRelationship rel) {
+        // ✅ CYPHER INJECTION SAFETY: Why this String.format is safe
+        // ──────────────────────────────────────────────────────────────────────────
+        // This uses String.format() to inject the relationship type, but it's SAFE because:
+        //
+        // 1. rel.getType() returns a DependencyEdge.RelationshipType enum
+        // 2. Enums have a fixed, compile-time set of values (INJECTS, RETURNS, ACCEPTS, etc.)
+        // 3. Users CANNOT inject arbitrary values through enum types
+        //
+        // WHY NOT use a parameter ($relType)?
+        // Neo4j Cypher does NOT support parameterized relationship types:
+        //   ✗ Invalid: MERGE (from)-[r:$relType]->(to)
+        //   ✓ Valid:   MERGE (from)-[r:EXTENDS]->(to)
+        //
+        // DEFENSIVE VALIDATION: We validate that type is from the enum
+        if (rel.getType() == null) {
+            throw new IllegalArgumentException("Relationship type cannot be null");
+        }
+        // .name() will throw NPE if type is null (defensive check above prevents this)
+        String relationshipType = rel.getType().name();  // Guaranteed to be enum value
+
         String cypher = String.format("""
             MATCH (from {id: $fromId})
             MATCH (to {id: $toId})
             MERGE (from)-[r:%s]->(to)
             SET r.sourceFile = $sourceFile,
                 r.lineNumber = $lineNumber
-            """, rel.getType().name());
+            """, relationshipType);
 
         Map<String, Object> params = createParams(
                 "fromId", rel.getFromId(),
@@ -303,7 +325,8 @@ public class Neo4jGraphStore {
             """;
 
         try (Session session = driver.session()) {
-            return session.readTransaction(tx -> {
+            // ✅ FIX: Use executeRead instead of deprecated readTransaction
+            return session.executeRead(tx -> {
                 Result result = tx.run(cypher, Collections.singletonMap("fqn", fullyQualifiedClassName));
                 return result.stream()
                         .map(record -> nodeToClassNode(record.get("dep").asNode()))
@@ -324,7 +347,8 @@ public class Neo4jGraphStore {
             """;
 
         try (Session session = driver.session()) {
-            return session.readTransaction(tx -> {
+            // ✅ FIX: Use executeRead instead of deprecated readTransaction
+            return session.executeRead(tx -> {
                 Result result = tx.run(cypher, Collections.singletonMap("methodName", methodName));
                 return result.stream()
                         .map(record -> nodeToMethodNode(record.get("caller").asNode()))
@@ -344,7 +368,8 @@ public class Neo4jGraphStore {
             """;
 
         try (Session session = driver.session()) {
-            return session.readTransaction(tx -> {
+            // ✅ FIX: Use executeRead instead of deprecated readTransaction
+            return session.executeRead(tx -> {
                 Result result = tx.run(cypher, Collections.singletonMap("fqn", fullyQualifiedClassName));
                 return result.stream()
                         .map(record -> nodeToClassNode(record.get("subclass").asNode()))
@@ -364,7 +389,8 @@ public class Neo4jGraphStore {
             """;
 
         try (Session session = driver.session()) {
-            return session.readTransaction(tx -> {
+            // ✅ FIX: Use executeRead instead of deprecated readTransaction
+            return session.executeRead(tx -> {
                 Result result = tx.run(cypher, Collections.singletonMap("fqn", fullyQualifiedClassName));
                 return result.stream()
                         .map(record -> nodeToMethodNode(record.get("m").asNode()))
@@ -384,7 +410,8 @@ public class Neo4jGraphStore {
             """;
 
         try (Session session = driver.session()) {
-            return session.readTransaction(tx -> {
+            // ✅ FIX: Use executeRead instead of deprecated readTransaction
+            return session.executeRead(tx -> {
                 Result result = tx.run(cypher, Collections.singletonMap("fqn", fullyQualifiedClassName));
                 return result.stream()
                         .map(record -> nodeToFieldNode(record.get("f").asNode()))
@@ -400,7 +427,8 @@ public class Neo4jGraphStore {
         String cypher = "MATCH (c:Class {id: $id}) RETURN c";
 
         try (Session session = driver.session()) {
-            return session.readTransaction(tx -> {
+            // ✅ FIX: Use executeRead instead of deprecated readTransaction
+            return session.executeRead(tx -> {
                 Result result = tx.run(cypher, Collections.singletonMap("id", id));
                 if (result.hasNext()) {
                     return nodeToClassNode(result.single().get("c").asNode());
@@ -411,14 +439,63 @@ public class Neo4jGraphStore {
     }
 
     /**
-     * Clear all code graph data (for reindexing)
+     * Clear all code graph data (for reindexing).
+     *
+     * ⚠️⚠️⚠️ CRITICAL WARNING - DATABASE WIPE DANGER ⚠️⚠️⚠️
+     * ════════════════════════════════════════════════════════════════════════
+     * This method deletes EVERYTHING in the Neo4j database!
+     *
+     * ❌ DOES NOT delete just one repository
+     * ❌ DOES NOT support multi-repo (all repos share the same Neo4j graph)
+     * ✓ Deletes ALL classes, methods, fields, and relationships for ALL repos
+     *
+     * Known limitation:
+     * - Neo4j nodes don't currently have a repoName property
+     * - Cannot selectively delete data for a single repository
+     * - All indexed repositories are mixed together in the same graph
+     *
+     * Use cases:
+     * - Complete database reset during development
+     * - Disaster recovery / corruption cleanup
+     *
+     * DO NOT CALL IN PRODUCTION unless you want to lose ALL indexed code!
+     *
+     * @deprecated This method is dangerous and should be rarely used.
+     *             Consider adding repoName to all nodes to enable repo-specific deletion.
+     * ════════════════════════════════════════════════════════════════════════
      */
+    @Deprecated(since = "1.0", forRemoval = true)
     public void clearAll() {
-        log.warn("CLEARING ALL NEO4J DATA");
+        log.error("⚠️⚠️⚠️ DANGER: Deleting ALL data from Neo4j database! ⚠️⚠️⚠️");
+        log.error("This will delete ALL repositories, ALL classes, ALL methods, ALL relationships!");
+        log.error("If you only want to clear ONE repository, this method cannot do that.");
+        log.error("You must re-index ALL repositories after calling this method.");
+
         try (Session session = driver.session()) {
+            long startTime = System.currentTimeMillis();
+
+            // Count nodes before deletion (for logging)
+            Result countResult = session.run("MATCH (n) RETURN count(n) as count");
+            long nodeCount = countResult.single().get("count").asLong();
+
+            log.warn("Deleting {} nodes from Neo4j...", nodeCount);
+
+            // Delete everything
             session.run("MATCH (n) DETACH DELETE n");
+
+            long duration = System.currentTimeMillis() - startTime;
+            log.warn("✅ Deleted {} nodes in {}ms. Database is now empty.", nodeCount, duration);
+        } catch (Exception e) {
+            log.error("Failed to clear Neo4j database", e);
+            throw new RuntimeException("Failed to clear Neo4j database", e);
         }
     }
+
+    // TODO: Add repo-specific deletion once repoName is added to all nodes
+    // public void clearRepo(String repoName) {
+    //     session.run("MATCH (n {repoName: $repoName}) DETACH DELETE n",
+    //                 Collections.singletonMap("repoName", repoName));
+    // }
 
     // ================================================================
     // CONVERSION METHODS

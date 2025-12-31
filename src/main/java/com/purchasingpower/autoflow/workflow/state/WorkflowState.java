@@ -1,6 +1,7 @@
 package com.purchasingpower.autoflow.workflow.state;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.purchasingpower.autoflow.model.WorkflowStatus;
 import org.bsc.langgraph4j.state.AgentState;
 import java.io.File;
 import java.util.ArrayList;
@@ -64,8 +65,23 @@ public class WorkflowState extends AgentState {
         return this.<String>value("logsPasted").orElse(null);
     }
 
-    public String getWorkflowStatus() {
-        return this.<String>value("workflowStatus").orElse(null);
+    /**
+     * Get current workflow status as enum.
+     * Safely converts from string stored in state map.
+     *
+     * @return WorkflowStatus enum, or null if not set
+     */
+    public WorkflowStatus getWorkflowStatus() {
+        String statusStr = this.<String>value("workflowStatus").orElse(null);
+        if (statusStr == null) {
+            return null;
+        }
+        try {
+            return WorkflowStatus.valueOf(statusStr);
+        } catch (IllegalArgumentException e) {
+            // Invalid status string - log warning and return null
+            return null;
+        }
     }
 
     public String getCurrentAgent() {

@@ -22,7 +22,6 @@
         <java.version>17</java.version>
         <jgit.version>6.8.0.202311291450-r</jgit.version>
         <docker-java.version>3.4.0</docker-java.version>
-        <pinecone.version>1.1.0</pinecone.version>
         <spoon.version>10.4.0</spoon.version>
         <jgrapht.version>1.5.2</jgrapht.version>
         <grpc.version>1.60.0</grpc.version>
@@ -153,26 +152,6 @@
         </dependency>
 
         <dependency>
-            <groupId>io.pinecone</groupId>
-            <artifactId>pinecone-client</artifactId>
-            <version>${pinecone.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>io.grpc</groupId>
-                    <artifactId>grpc-protobuf</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>io.grpc</groupId>
-                    <artifactId>grpc-stub</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>io.grpc</groupId>
-                    <artifactId>grpc-netty-shaded</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <optional>true</optional>
@@ -233,6 +212,35 @@
                     </excludes>
                 </configuration>
             </plugin>
+
+            <!-- Checkstyle: DISABLED - Would check all existing code (964+ violations)
+                 TODO: Re-enable with exclusions for existing code, only check new AI-generated code
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <version>3.3.1</version>
+                <configuration>
+                    <configLocation>checkstyle.xml</configLocation>
+                    <consoleOutput>true</consoleOutput>
+                    <failsOnError>false</failsOnError>
+                    <violationSeverity>warning</violationSeverity>
+                    <linkXRef>false</linkXRef>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
+            -->
+
+            <!-- PMD: DISABLED - Would check all existing code
+                 TODO: Re-enable with exclusions for existing code
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-pmd-plugin</artifactId>
+                <version>3.21.2</version>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
+            -->
         </plugins>
     </build>
 

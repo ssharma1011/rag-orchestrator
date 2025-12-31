@@ -1,9 +1,16 @@
 package com.purchasingpower.autoflow.workflow.agents;
 
 import com.purchasingpower.autoflow.client.GeminiClient;
-import com.purchasingpower.autoflow.client.PineconeRetriever;
+import com.purchasingpower.autoflow.config.AgentConfig;
+import com.purchasingpower.autoflow.model.WorkflowStatus;
+import com.purchasingpower.autoflow.model.git.ParsedGitUrl;
+import com.purchasingpower.autoflow.model.retrieval.CodeContext;
+import com.purchasingpower.autoflow.model.retrieval.RetrievalPlan;
+import com.purchasingpower.autoflow.service.DynamicRetrievalExecutor;
 import com.purchasingpower.autoflow.service.GitOperationsService;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
+import com.purchasingpower.autoflow.service.RetrievalPlanner;
+import com.purchasingpower.autoflow.util.GitUrlParser;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +28,9 @@ import java.util.stream.Collectors;
  * - "How does authentication work?"
  * - "What design patterns are used?"
  *
+ * ✅ NEW: Uses LLM-driven dynamic retrieval planning instead of hardcoded strategies.
+ * The LLM analyzes the question and generates a custom retrieval plan.
+ *
  * Uses externalized prompt from: prompts/documentation-agent.yaml
  */
 @Slf4j
@@ -28,11 +38,16 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class DocumentationAgent {
 
-    private final PineconeRetriever pineconeRetriever;
     private final GeminiClient geminiClient;
     private final PromptLibraryService promptLibrary;
     private final GitOperationsService gitService;
     private final com.purchasingpower.autoflow.repository.GraphNodeRepository graphNodeRepository;
+    private final AgentConfig agentConfig;
+    private final GitUrlParser gitUrlParser;
+
+    // ✅ Dynamic retrieval components (using Neo4j, not Pinecone)
+    private final RetrievalPlanner retrievalPlanner;
+    private final DynamicRetrievalExecutor retrievalExecutor;
 
     public Map<String, Object> execute(WorkflowState state) {
         log.info("📚 Generating documentation for: {}", state.getRequirement());
@@ -43,25 +58,50 @@ public class DocumentationAgent {
             String requirement = state.getRequirement();
             RequirementAnalysis analysis = state.getRequirementAnalysis();
 
+            // ✅ FIX: Parse URL correctly to extract repo name (handles /tree/branch URLs)
+            ParsedGitUrl parsed = gitUrlParser.parse(state.getRepoUrl());
+            String repoName = parsed.getRepoName();
+
             // ================================================================
-            // STEP 1: FIND RELEVANT CODE USING RAG
+            // STEP 1: GENERATE DYNAMIC RETRIEVAL PLAN
             // ================================================================
 
-            log.info("🔍 Searching for relevant code...");
+            log.info("🧠 Planning retrieval strategy...");
 
-            // Create embedding for the question
-            List<Double> queryEmbedding = geminiClient.createEmbedding(requirement);
+            // LLM analyzes the question and generates a custom retrieval plan
+            // No more hardcoded "if broad_overview then do X" logic!
+            RetrievalPlan retrievalPlan = retrievalPlanner.planRetrieval(
+                requirement,
+                analysis,
+                repoName
+            );
 
-            // Search Pinecone
-            String repoName = gitService.extractRepoName(state.getRepoUrl());
-            List<PineconeRetriever.CodeContext> relevantCode =
-                    pineconeRetriever.findRelevantCodeStructured(queryEmbedding, repoName);
+            // ================================================================
+            // STEP 2: EXECUTE RETRIEVAL PLAN
+            // ================================================================
 
-            log.info("Found {} relevant code chunks from Pinecone", relevantCode.size());
+            log.info("🔍 Executing retrieval plan...");
 
-            // FALLBACK: If Pinecone returns 0 results, use Oracle CODE_NODES table
+            List<CodeContext> relevantCode = retrievalExecutor.execute(retrievalPlan);
+
+            log.info("Found {} relevant code chunks", relevantCode.size());
+
+            // Enhanced logging: Show what code was actually retrieved
+            if (!relevantCode.isEmpty()) {
+                log.info("📋 Retrieved code chunks:");
+                relevantCode.stream().limit(agentConfig.getDocumentation().getMaxLogPreview()).forEach(code ->
+                    log.info("  - {} (score: {}, file: {})",
+                        code.className(),
+                        String.format("%.2f", code.score()),  // ✅ FIX: Pre-format number (SLF4J doesn't support {:.2f})
+                        code.filePath())
+                );
+            } else {
+                log.warn("⚠️ Neo4j returned ZERO results for query: {}", requirement);
+            }
+
+            // FALLBACK: If Neo4j returns 0 results, use Oracle CODE_NODES table
             if (relevantCode.isEmpty()) {
-                log.warn("⚠️ Pinecone returned 0 results - falling back to Oracle CODE_NODES table");
+                log.warn("⚠️ Neo4j returned 0 results - falling back to Oracle CODE_NODES table");
 
                 List<com.purchasingpower.autoflow.model.graph.GraphNode> graphNodes =
                         graphNodeRepository.findByRepoName(repoName);
@@ -72,7 +112,7 @@ public class DocumentationAgent {
                     // Convert GraphNodes to CodeContext format
                     // Take a representative sample to avoid overwhelming the LLM
                     relevantCode = graphNodes.stream()
-                            .limit(20)  // Take top 20 nodes
+                            .limit(agentConfig.getDocumentation().getMaxFallbackNodes())  // Take top N nodes
                             .map(node -> {
                                 String className = node.getSimpleName();  // ✅ Fixed: getSimpleName() not getName()
                                 String filePath = node.getFilePath() != null ? node.getFilePath() : "unknown";
@@ -88,7 +128,7 @@ public class DocumentationAgent {
                                 };
 
                                 // ✅ Fixed: Correct CodeContext constructor (id, score, chunkType, className, methodName, filePath, content)
-                                return new PineconeRetriever.CodeContext(
+                                return new CodeContext(
                                         node.getNodeId(),
                                         score,
                                         node.getType().toString(),
@@ -105,28 +145,54 @@ public class DocumentationAgent {
             }
 
             // ================================================================
-            // STEP 2: GENERATE EXPLANATION USING LLM
+            // STEP 3: GENERATE EXPLANATION USING LLM
             // ================================================================
 
             log.info("🤖 Generating explanation...");
 
             String prompt = buildPromptFromTemplate(requirement, analysis, relevantCode);
 
+            // Log prompt preview for debugging
+            log.debug("Generated prompt (first 500 chars): {}",
+                prompt.length() > 500 ? prompt.substring(0, 500) + "..." : prompt);
+
             String explanation = geminiClient.generateText(prompt);
 
             log.info("✅ Documentation generated ({} characters)", explanation.length());
 
+            // Validate response quality
+            validateResponseQuality(explanation, relevantCode);
+
             // ================================================================
-            // STEP 3: RETURN EXPLANATION (NO CODE GENERATION!)
+            // STEP 4: ADD ASSISTANT RESPONSE TO CONVERSATION HISTORY
+            // ================================================================
+
+            // ✅ CRITICAL FIX: Add assistant's response to conversation history
+            // Without this, the conversation history only has the user's question!
+            List<ChatMessage> conversationHistory = state.getConversationHistory() != null
+                    ? new ArrayList<>(state.getConversationHistory())
+                    : new ArrayList<>();
+
+            ChatMessage assistantMessage = new ChatMessage();
+            assistantMessage.setRole("assistant");
+            assistantMessage.setContent("✅ **Documentation Generated**\n\n" + explanation);
+            assistantMessage.setTimestamp(java.time.LocalDateTime.now());
+            conversationHistory.add(assistantMessage);
+
+            updates.put("conversationHistory", conversationHistory);
+
+            // ================================================================
+            // STEP 5: RETURN EXPLANATION (NO CODE GENERATION!)
             // ================================================================
 
             updates.put("documentationResult", explanation);
+            updates.put("retrievalPlan", retrievalPlan);  // Save for debugging/explainability
             updates.put("lastAgentDecision", AgentDecision.endSuccess(
                     "✅ **Documentation Generated**\n\n" + explanation
             ));
 
             // Mark workflow as complete (skip code generation agents)
-            updates.put("workflowStatus", "COMPLETED");
+            updates.put("workflowStatus", WorkflowStatus.COMPLETED.name());
 
             return updates;
 
@@ -146,7 +212,7 @@ public class DocumentationAgent {
     private String buildPromptFromTemplate(
             String requirement,
             RequirementAnalysis analysis,
-            List<PineconeRetriever.CodeContext> relevantCode) {
+            List<CodeContext> relevantCode) {
 
         Map<String, Object> variables = new HashMap<>();
 
@@ -158,7 +224,7 @@ public class DocumentationAgent {
 
         // Format relevant code for Mustache template
         List<Map<String, Object>> codeData = relevantCode.stream()
-                .limit(10)  // Only include top 10 matches
+                .limit(agentConfig.getDocumentation().getMaxCodeMatches())  // Only include top N matches
                 .map(code -> {
                     Map<String, Object> codeMap = new HashMap<>();
                     codeMap.put("className", code.className());
@@ -174,5 +240,51 @@ public class DocumentationAgent {
 
         // Render using PromptLibraryService
         return promptLibrary.render("documentation-agent", variables);
+    }
+
+    /**
+     * Validates response quality to detect hallucination.
+     *
+     * Logs warnings if response appears generic or ungrounded.
+     */
+    private void validateResponseQuality(String response, List<CodeContext> relevantCode) {
+        if (relevantCode.isEmpty()) {
+            // No code was provided - response should acknowledge this
+            if (!response.contains("No Code Found") &&
+                !response.contains("no indexed code") &&
+                !response.contains("not yet indexed")) {
+
+                log.warn("⚠️ HALLUCINATION DETECTED: No code provided but response doesn't acknowledge this!");
+                log.warn("Response preview: {}", response.substring(0, Math.min(300, response.length())));
+            }
+        } else {
+            // Code was provided - response should reference specific classes/methods
+            Set<String> actualClasses = relevantCode.stream()
+                    .map(CodeContext::className)
+                    .filter(name -> name != null && !name.isEmpty())
+                    .collect(Collectors.toSet());
+
+            // Check if response mentions at least one actual class
+            boolean mentionsActualCode = actualClasses.stream()
+                    .anyMatch(response::contains);
+
+            if (!mentionsActualCode && !actualClasses.isEmpty()) {
+                log.warn("⚠️ POSSIBLE HALLUCINATION: Response doesn't mention any retrieved classes");
+                log.warn("Expected to see references to: {}", actualClasses);
+                log.warn("Response preview: {}", response.substring(0, Math.min(300, response.length())));
+            }
+
+            // Check for common hallucinated class names
+            String[] commonHallucinations = {
+                "UserService", "UserController", "PaymentService", "PaymentController",
+                "OrderService", "ProductService", "AuthenticationService", "CustomerService"
+            };
+
+            for (String hallucination : commonHallucinations) {
+                if (response.contains(hallucination) && !actualClasses.contains(hallucination)) {
+                    log.warn("⚠️ HALLUCINATION DETECTED: Response mentions '{}' which is not in provided code", hallucination);
+                }
+            }
+        }
     }
 }

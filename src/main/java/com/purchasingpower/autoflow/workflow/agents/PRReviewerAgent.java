@@ -2,6 +2,7 @@ package com.purchasingpower.autoflow.workflow.agents;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.purchasingpower.autoflow.client.GeminiClient;
+import com.purchasingpower.autoflow.config.AgentConfig;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
 import com.purchasingpower.autoflow.workflow.state.*;
 import lombok.RequiredArgsConstructor;
@@ -17,14 +18,13 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class PRReviewerAgent {
 
-    private static final int MAX_RETRIES = 3;
-    
     private final GeminiClient geminiClient;
     private final PromptLibraryService promptLibrary;
     private final ObjectMapper objectMapper;
+    private final AgentConfig agentConfig;
 
     public Map<String, Object> execute(WorkflowState state) {
-        log.info("👀 Reviewing PR quality (attempt {}/{})...", state.getReviewAttempt(), MAX_RETRIES);
+        log.info("👀 Reviewing PR quality (attempt {}/{})...", state.getReviewAttempt(), agentConfig.getCodeReview().getMaxRetryAttempts());
 
         try {
             CodeReview review = reviewWithLLM(state);
@@ -41,7 +41,7 @@ public class PRReviewerAgent {
             }
 
             long criticalCount = review.getCriticalIssueCount();
-            if (criticalCount > 0 && state.getReviewAttempt() < MAX_RETRIES) {
+            if (criticalCount > 0 && state.getReviewAttempt() < agentConfig.getCodeReview().getMaxRetryAttempts()) {
                 int newAttempt = state.getReviewAttempt() + 1;
                 updates.put("reviewAttempt", newAttempt);
                 updates.put("lastAgentDecision", AgentDecision.retry("Critical issues found, regenerating code"));

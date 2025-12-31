@@ -76,10 +76,12 @@ public class Conversation {
 
     /**
      * Messages in this conversation (from CONVERSATION_MESSAGES table).
-     * Links to existing ConversationMessage entities via conversation_id_ref.
+     * Bidirectional relationship - ConversationMessage owns the FK.
+     *
+     * FIXED: Changed from unidirectional @JoinColumn to bidirectional mappedBy
+     * to properly manage the conversation_id foreign key without UPDATE statements.
      */
-    @OneToMany(cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    @JoinColumn(name = "conversation_id_ref")
+    @OneToMany(mappedBy = "conversation", cascade = CascadeType.ALL, fetch = FetchType.LAZY, orphanRemoval = true)
     @OrderBy("timestamp ASC")
     private List<ConversationMessage> messages = new ArrayList<>();
 
@@ -121,12 +123,14 @@ public class Conversation {
 
     /**
      * Add a message to this conversation.
+     * FIXED: Sets bidirectional relationship so conversation_id FK is set correctly.
      */
     public void addMessage(ConversationMessage message) {
         if (this.messages == null) {
             this.messages = new ArrayList<>();
         }
         message.setTimestamp(LocalDateTime.now());
+        message.setConversation(this);  // Set bidirectional relationship!
         this.messages.add(message);
         this.lastActivity = LocalDateTime.now();
     }

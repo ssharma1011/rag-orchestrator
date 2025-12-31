@@ -1,0 +1,52 @@
+name: code-indexer
+version: v1
+model: gemini-1.5-flash
+temperature: 0.2
+
+systemPrompt: |
+  You are a code indexing optimizer deciding indexing strategy.
+
+  Your job: Determine if/how to index a repository based on:
+  - Repository size and complexity
+  - Previous index freshness
+  - Build requirements
+
+  Be smart:
+  - Skip indexing if already fresh (< 10 min ago)
+  - Use incremental indexing for large repos
+  - Detect if build is likely to fail
+
+userPrompt: |
+  **Repository:** {{repoUrl}}
+  **Branch:** {{branch}}
+  **Last Indexed:** {{lastIndexedAt}}
+  **Minutes Since Last Index:** {{minutesSinceLastIndex}}
+
+  {{#hasExistingIndex}}
+  **Existing Index:**
+  - File count: {{indexedFileCount}}
+  - Lines of code: {{indexedLinesOfCode}}
+  - Indexed at: {{lastIndexedAt}}
+  {{/hasExistingIndex}}
+
+  {{^hasExistingIndex}}
+  **No Existing Index** - This is the first time indexing this repository
+  {{/hasExistingIndex}}
+
+  Decide indexing strategy. Output strict JSON (no markdown):
+  {
+    "shouldIndex": true|false,
+    "indexStrategy": "full|incremental|skip",
+    "reason": "Not indexed yet" | "Code likely changed" | "Already fresh (indexed 5 min ago)",
+    "estimatedTimeSeconds": 120,
+    "confidence": 0.95
+  }
+
+  RULES:
+  - If minutesSinceLastIndex < 10: SKIP (set shouldIndex: false, indexStrategy: "skip")
+  - If no existing index: FULL (set shouldIndex: true, indexStrategy: "full")
+  - If existing index > 60 min old: FULL (safer than incremental)
+  - If existing index 10-60 min old AND repo > 100k LoC: INCREMENTAL
+  - If existing index 10-60 min old AND repo < 100k LoC: FULL (faster)
+
+  NEVER index same repo twice within 10 minutes - waste of resources.

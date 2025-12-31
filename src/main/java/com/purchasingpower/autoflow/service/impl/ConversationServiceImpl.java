@@ -7,6 +7,7 @@ import com.purchasingpower.autoflow.repository.ConversationRepository;
 import com.purchasingpower.autoflow.repository.WorkflowRepository;
 import com.purchasingpower.autoflow.service.ConversationService;
 import com.purchasingpower.autoflow.service.GitOperationsService;
+import com.purchasingpower.autoflow.util.GitUrlParser;
 import com.purchasingpower.autoflow.workflow.state.ChatMessage;
 import com.purchasingpower.autoflow.workflow.state.WorkflowState;
 import lombok.RequiredArgsConstructor;
@@ -32,6 +33,7 @@ public class ConversationServiceImpl implements ConversationService {
     private final ConversationRepository conversationRepo;
     private final WorkflowRepository workflowRepo;
     private final GitOperationsService gitService;
+    private final GitUrlParser gitUrlParser;
 
     @Override
     @Transactional
@@ -43,7 +45,8 @@ public class ConversationServiceImpl implements ConversationService {
         String repoName = null;
         if (repoUrl != null && !repoUrl.trim().isEmpty()) {
             try {
-                repoName = gitService.extractRepoName(repoUrl);
+                // ✅ FIX: Parse URL correctly to extract repo name (handles /tree/branch URLs)
+                repoName = gitUrlParser.parse(repoUrl).getRepoName();
             } catch (Exception e) {
                 log.warn("Failed to extract repo name from URL: {}", repoUrl, e);
             }

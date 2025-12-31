@@ -1,5 +1,7 @@
 package com.purchasingpower.autoflow.service.codegen;
 
+import com.purchasingpower.autoflow.model.codegen.GeneratedCodeWithTests;
+
 /**
  * Generates code with built-in self-correction through compilation feedback.
  *

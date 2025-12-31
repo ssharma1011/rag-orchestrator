@@ -1,6 +1,6 @@
 package com.purchasingpower.autoflow.agent;
 
-import com.purchasingpower.autoflow.core.Conversation;
+import com.purchasingpower.autoflow.model.conversation.Conversation;
 
 import java.util.List;
 

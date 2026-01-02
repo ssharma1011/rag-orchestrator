@@ -14,20 +14,19 @@ import org.springframework.stereotype.Service;
 import java.util.*;
 
 /**
- * CypherQueryService - Replaces Pinecone embedding search with Neo4j Cypher queries.
+ * CypherQueryService - Neo4j Cypher query execution for code retrieval.
  *
- * Instead of fuzzy embedding similarity, uses precise graph queries for:
+ * Uses precise graph queries for:
  * - Metadata filtering (annotations, class names, packages)
  * - Relationship traversal (dependencies, calls, references)
  * - Full-text search (code content, documentation)
  * - Structural queries (package hierarchy, class relationships)
  *
- * Benefits over Pinecone:
- * - More accurate (precise queries vs fuzzy similarity)
- * - More complete (returns ALL matches, not top-K approximation)
- * - Faster (optimized graph database)
+ * Benefits:
+ * - Accurate (precise queries vs fuzzy similarity)
+ * - Complete (returns ALL matches, not top-K approximation)
+ * - Fast (optimized graph database)
  * - Explainable (can show Cypher query)
- * - Free (no Pinecone costs)
  */
 @Slf4j
 @Service
@@ -131,7 +130,21 @@ public class CypherQueryService {
 
         if (filters.containsKey("className_contains")) {
             String className = filters.get("className_contains");
-            cypher.append(" AND n.name CONTAINS '").append(className).append("'");
+            // Handle pipe-separated values as OR conditions
+            // Example: "Agent|Orchestrator|Manager" becomes (n.name CONTAINS 'Agent' OR n.name CONTAINS 'Orchestrator' OR ...)
+            if (className.contains("|")) {
+                String[] terms = className.split("\\|");
+                cypher.append(" AND (");
+                for (int i = 0; i < terms.length; i++) {
+                    if (i > 0) {
+                        cypher.append(" OR ");
+                    }
+                    cypher.append("n.name CONTAINS '").append(terms[i].trim()).append("'");
+                }
+                cypher.append(")");
+            } else {
+                cypher.append(" AND n.name CONTAINS '").append(className).append("'");
+            }
         }
 
         if (filters.containsKey("package")) {

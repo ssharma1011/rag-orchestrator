@@ -43,7 +43,7 @@ public class CodeChunk {
     private ChunkType type;
 
     /**
-     * Repository name (for filtering in Pinecone queries)
+     * Repository name (for filtering in queries)
      */
     private String repoName;
 
@@ -89,13 +89,11 @@ public class CodeChunk {
     private MethodMetadata methodMetadata;
 
     // ========================================================================
-    // PINECONE STORAGE FORMAT
+    // METADATA STORAGE FORMAT
     // ========================================================================
 
     /**
-     * Flattened metadata for Pinecone storage.
-     * Pinecone requires String key-value pairs (Struct format).
-     *
+     * Flattened metadata for storage.
      * We flatten ClassMetadata/MethodMetadata into simple strings:
      * {
      *   "chunk_type": "METHOD",
@@ -116,8 +114,7 @@ public class CodeChunk {
     // ========================================================================
 
     /**
-     * Converts structured metadata into flat String map for Pinecone.
-     * Called before upserting to vector database.
+     * Converts structured metadata into flat String map for storage.
      */
     public Map<String, String> toFlatMetadata() {
         Map<String, String> flat = new HashMap<>();
@@ -126,9 +123,7 @@ public class CodeChunk {
         flat.put("chunk_type", type.toString());
         flat.put("repo_name", repoName);
 
-        // CRITICAL: Pinecone metadata limit is 40KB per vector
-        // Store only a preview of content (first 500 chars) to avoid exceeding limit
-        // Full content is already embedded in the vector itself
+        // Store only a preview of content (first 500 chars) for efficiency
         if (content != null) {
             String contentPreview = content.length() > 500
                 ? content.substring(0, 500) + "..."

@@ -59,7 +59,7 @@ public class DependencyEdge {
     }
 
     /**
-     * Returns a string representation for Pinecone metadata.
+     * Returns a string representation for metadata storage.
      * Format: TYPE:TargetClass
      * Example: "INJECTS:com.purchasingpower.service.UserService"
      */

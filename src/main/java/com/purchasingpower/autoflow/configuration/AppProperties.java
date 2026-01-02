@@ -32,9 +32,4 @@ public class AppProperties {
     @NotNull
     @NestedConfigurationProperty
     private GeminiProperties gemini = new GeminiProperties();
-
-    @Valid
-    @NotNull
-    @NestedConfigurationProperty
-    private PineconeProperties pinecone = new PineconeProperties();
 }

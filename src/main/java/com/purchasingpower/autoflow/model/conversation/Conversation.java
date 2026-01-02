@@ -72,6 +72,7 @@ public class Conversation {
      * One conversation can have many workflows over time.
      */
     @OneToMany(mappedBy = "conversation", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @lombok.Builder.Default
     private List<Workflow> workflows = new ArrayList<>();
 
     /**
@@ -80,9 +81,13 @@ public class Conversation {
      *
      * FIXED: Changed from unidirectional @JoinColumn to bidirectional mappedBy
      * to properly manage the conversation_id foreign key without UPDATE statements.
+     *
+     * NOTE: @Builder.Default ensures builder initializes this to new ArrayList()
+     * instead of null, preventing Hibernate orphanRemoval errors.
      */
     @OneToMany(mappedBy = "conversation", cascade = CascadeType.ALL, fetch = FetchType.LAZY, orphanRemoval = true)
     @OrderBy("timestamp ASC")
+    @lombok.Builder.Default
     private List<ConversationMessage> messages = new ArrayList<>();
 
     /**

@@ -268,54 +268,253 @@ autoflow:
               mode: ANY
       
       # ================================================================
-      # HYBRIS - E-COMMERCE PLATFORM
+      # HYBRIS / SAP COMMERCE CLOUD - E-COMMERCE PLATFORM
       # ================================================================
       - name: SAP Hybris
         basePackage: de.hybris
         fileExtensions: [.java]
         projectType: HYBRIS
         rules:
+          # === STOREFRONT LAYER ===
           - role: hybris:controller
             patterns:
               annotations: ["@Controller"]
               importPrefixes: ["de.hybris.platform.acceleratorstorefrontcommons"]
               mode: ALL
-          
+
+          - role: hybris:page-controller
+            patterns:
+              superClasses: ["AbstractPageController", "AbstractSearchPageController", "AbstractCheckoutController"]
+              mode: ANY
+
+          - role: hybris:component-controller
+            patterns:
+              superClasses: ["AbstractCMSComponentController"]
+              mode: ALL
+
+          # === FACADE LAYER ===
           - role: hybris:facade
             patterns:
               interfaces: ["de.hybris.platform.commercefacades"]
               mode: ANY
-          
+
+          - role: hybris:facade-impl
+            patterns:
+              classNameSuffix: "FacadeImpl"
+              importPrefixes: ["de.hybris.platform.commercefacades"]
+              mode: ALL
+
+          # === SERVICE LAYER ===
           - role: hybris:service
             patterns:
               importPrefixes: ["de.hybris.platform.servicelayer.service"]
               mode: ANY
-          
+
+          - role: hybris:service-impl
+            patterns:
+              classNameSuffix: "ServiceImpl"
+              importPrefixes: ["de.hybris.platform.servicelayer"]
+              mode: ALL
+
+          # === DATA ACCESS LAYER ===
           - role: hybris:dao
             patterns:
               classes: ["FlexibleSearchQuery"]
               importPrefixes: ["de.hybris.platform.servicelayer.search"]
               mode: ANY
-          
+
+          - role: hybris:dao-impl
+            patterns:
+              classNameSuffix: "DaoImpl"
+              classes: ["FlexibleSearchService"]
+              mode: ALL
+
+          # === DATA TRANSFORMATION ===
           - role: hybris:converter
             patterns:
               interfaces: ["de.hybris.platform.servicelayer.dto.converter.Converter"]
               mode: ALL
-          
+
           - role: hybris:populator
             patterns:
               interfaces: ["de.hybris.platform.converters.Populator"]
               mode: ALL
-          
-          - role: hybris:interceptor
+
+          - role: hybris:configurable-populator
             patterns:
-              interfaces:
-                - de.hybris.platform.servicelayer.interceptor.PrepareInterceptor
-                - de.hybris.platform.servicelayer.interceptor.ValidateInterceptor
-              mode: ANY
-          
+              interfaces: ["de.hybris.platform.converters.ConfigurablePopulator"]
+              mode: ALL
+
+          # === INTERCEPTORS (Lifecycle Hooks) ===
+          - role: hybris:prepare-interceptor
+            patterns:
+              interfaces: ["de.hybris.platform.servicelayer.interceptor.PrepareInterceptor"]
+              mode: ALL
+
+          - role: hybris:validate-interceptor
+            patterns:
+              interfaces: ["de.hybris.platform.servicelayer.interceptor.ValidateInterceptor"]
+              mode: ALL
+
+          - role: hybris:load-interceptor
+            patterns:
+              interfaces: ["de.hybris.platform.servicelayer.interceptor.LoadInterceptor"]
+              mode: ALL
+
+          - role: hybris:remove-interceptor
+            patterns:
+              interfaces: ["de.hybris.platform.servicelayer.interceptor.RemoveInterceptor"]
+              mode: ALL
+
+          # === JOBS & SCHEDULING ===
           - role: hybris:cronjob
             patterns:
-              interfaces: ["de.hybris.platform.cronjob.jalo.CronJob"]
-              annotations: ["@Override"]
+              superClasses: ["AbstractJobPerformable"]
               mode: ALL
+
+          - role: hybris:cronjob-legacy
+            patterns:
+              interfaces: ["de.hybris.platform.cronjob.jalo.CronJob"]
+              mode: ALL
+
+          # === OCC REST API ===
+          - role: hybris:occ-controller
+            patterns:
+              annotations: ["@RestController", "@Api"]
+              importPrefixes: ["de.hybris.platform.webservicescommons"]
+              mode: ALL
+
+          - role: hybris:occ-endpoint
+            patterns:
+              annotations: ["@ApiOperation", "@RequestMapping"]
+              importPrefixes: ["io.swagger.annotations"]
+              mode: ALL
+
+          # === EVENT HANDLING ===
+          - role: hybris:event-listener
+            patterns:
+              superClasses: ["AbstractEventListener"]
+              importPrefixes: ["de.hybris.platform.servicelayer.event"]
+              mode: ANY
+
+          - role: hybris:after-save-listener
+            patterns:
+              interfaces: ["de.hybris.platform.tx.AfterSaveListener"]
+              mode: ALL
+
+          # === BACKOFFICE ===
+          - role: hybris:backoffice-widget
+            patterns:
+              annotations: ["@SocketEvent", "@ViewEvent"]
+              importPrefixes: ["com.hybris.cockpitng"]
+              mode: ANY
+
+          - role: hybris:backoffice-action
+            patterns:
+              interfaces: ["com.hybris.cockpitng.actions.ActionContext"]
+              mode: ANY
+
+          # === SOLR SEARCH ===
+          - role: hybris:solr-indexer
+            patterns:
+              interfaces: ["de.hybris.platform.solrfacetsearch.indexer"]
+              superClasses: ["AbstractValueResolver"]
+              mode: ANY
+
+          - role: hybris:solr-provider
+            patterns:
+              interfaces: ["de.hybris.platform.solrfacetsearch.provider.FieldValueProvider"]
+              mode: ALL
+
+          # === ORDER PROCESS ===
+          - role: hybris:process-action
+            patterns:
+              superClasses: ["AbstractAction", "AbstractSimpleDecisionAction", "AbstractProceduralAction"]
+              mode: ANY
+
+          # === VALIDATION ===
+          - role: hybris:dynamic-attribute
+            patterns:
+              annotations: ["@DynamicAttributeHandler"]
+              mode: ALL
+
+          - role: hybris:attribute-handler
+            patterns:
+              interfaces: ["de.hybris.platform.servicelayer.model.attribute.DynamicAttributeHandler"]
+              mode: ALL
+
+      # ================================================================
+      # HYBRIS XML CONFIGURATION FILES
+      # ================================================================
+      - name: SAP Hybris XML
+        basePackage: hybris-config
+        fileExtensions: [.xml]
+        projectType: HYBRIS
+        rules:
+          - role: hybris:items-xml
+            patterns:
+              fileNamePattern: "*-items.xml"
+              xmlElements: ["itemtype", "relation", "enumtype", "atomictype"]
+              mode: ANY
+
+          - role: hybris:spring-xml
+            patterns:
+              fileNamePattern: "*-spring.xml"
+              xmlElements: ["bean", "alias", "property"]
+              mode: ANY
+
+          - role: hybris:extension-info
+            patterns:
+              fileNamePattern: "extensioninfo.xml"
+              xmlElements: ["extension", "requires-extension", "coremodule"]
+              mode: ANY
+
+          - role: hybris:backoffice-config
+            patterns:
+              fileNamePattern: "*-backoffice-config.xml"
+              xmlElements: ["config", "context", "y:editorArea"]
+              mode: ANY
+
+          - role: hybris:beans-xml
+            patterns:
+              fileNamePattern: "*-beans.xml"
+              xmlElements: ["bean", "enum", "property"]
+              mode: ANY
+
+      # ================================================================
+      # HYBRIS IMPEX DATA FILES
+      # ================================================================
+      - name: SAP Hybris ImpEx
+        basePackage: hybris-data
+        fileExtensions: [.impex]
+        projectType: HYBRIS
+        rules:
+          - role: hybris:impex-essential
+            patterns:
+              fileNamePattern: "*essentialdata*.impex"
+              mode: ALL
+
+          - role: hybris:impex-sample
+            patterns:
+              fileNamePattern: "*sampledata*.impex"
+              mode: ALL
+
+          - role: hybris:impex-project
+            patterns:
+              fileNamePattern: "*projectdata*.impex"
+              mode: ALL
+
+          - role: hybris:impex-cms
+            patterns:
+              contentPatterns: ["INSERT_UPDATE CMSParagraphComponent", "INSERT_UPDATE ContentPage", "INSERT_UPDATE ContentSlot"]
+              mode: ANY
+
+          - role: hybris:impex-product
+            patterns:
+              contentPatterns: ["INSERT_UPDATE Product", "INSERT_UPDATE Category", "INSERT_UPDATE PriceRow"]
+              mode: ANY
+
+          - role: hybris:impex-solr
+            patterns:
+              contentPatterns: ["INSERT_UPDATE SolrIndexedType", "INSERT_UPDATE SolrIndexedProperty"]
+              mode: ANY

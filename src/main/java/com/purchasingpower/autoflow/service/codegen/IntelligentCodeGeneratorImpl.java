@@ -2,6 +2,7 @@ package com.purchasingpower.autoflow.service.codegen;
 
 import com.google.common.base.Preconditions;
 import com.purchasingpower.autoflow.client.GeminiClient;
+import com.purchasingpower.autoflow.model.codegen.GeneratedCodeWithTests;
 import com.purchasingpower.autoflow.service.PromptLibraryService;
 import com.purchasingpower.autoflow.service.compilation.CompilationError;
 import com.purchasingpower.autoflow.service.compilation.CompilationResult;

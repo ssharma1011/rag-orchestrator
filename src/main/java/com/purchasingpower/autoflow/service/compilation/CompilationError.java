@@ -61,7 +61,6 @@ public class CompilationError {
         if (message.contains("org.springframework")) return "Spring";
         if (message.contains("org.neo4j")) return "Neo4j";
         if (message.contains("com.google.cloud")) return "Google Cloud";
-        if (message.contains("io.pinecone")) return "Pinecone";
 
         // Check for class names that might indicate library
         if (message.contains("Transaction") && message.contains("cannot find symbol")) {

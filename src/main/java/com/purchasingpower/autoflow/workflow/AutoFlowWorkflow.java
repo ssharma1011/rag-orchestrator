@@ -108,7 +108,20 @@ public class AutoFlowWorkflow {
         graph.addNode("chat_responder", node_async(s -> {
             log.info("💬 Responding to casual chat message");
             Map<String, Object> updates = new java.util.HashMap<>(s.toMap());
-            updates.put("lastAgentDecision", AgentDecision.endSuccess("👋 Hello! I'm ready to help with your codebase. What would you like to work on?"));
+
+            String response = "👋 Hello! I'm ready to help with your codebase. What would you like to work on?";
+
+            // Add assistant response to conversation history
+            java.util.List<com.purchasingpower.autoflow.workflow.state.ChatMessage> conversationHistory =
+                s.getConversationHistory() != null ? new java.util.ArrayList<>(s.getConversationHistory()) : new java.util.ArrayList<>();
+            com.purchasingpower.autoflow.workflow.state.ChatMessage assistantMsg = new com.purchasingpower.autoflow.workflow.state.ChatMessage();
+            assistantMsg.setRole("assistant");
+            assistantMsg.setContent(response);
+            assistantMsg.setTimestamp(java.time.LocalDateTime.now());
+            conversationHistory.add(assistantMsg);
+            updates.put("conversationHistory", conversationHistory);
+
+            updates.put("lastAgentDecision", AgentDecision.endSuccess(response));
             updates.put("workflowStatus", WorkflowStatus.COMPLETED.name());
             return updates;
         }));

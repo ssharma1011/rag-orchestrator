@@ -10,25 +10,12 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 /**
  * REST controller for Server-Sent Events (SSE) streaming.
  *
- * Provides real-time workflow updates to replace polling.
+ * @deprecated Use {@link com.purchasingpower.autoflow.api.ChatController#stream} instead.
+ * GET /api/v1/chat/{conversationId}/stream
  *
- * Frontend usage:
- * <pre>
- * const eventSource = new EventSource(
- *   `http://localhost:8080/api/v1/workflows/${conversationId}/stream`
- * );
- *
- * eventSource.onmessage = (event) => {
- *   const data = JSON.parse(event.data);
- *   console.log(`[${data.agent}] ${data.message} (${data.progress * 100}%)`);
- *
- *   if (data.status === 'COMPLETED') {
- *     eventSource.close();
- *     showResults();
- *   }
- * };
- * </pre>
+ * This controller will be removed in a future release.
  */
+@Deprecated(since = "2.0.0", forRemoval = true)
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/workflows")

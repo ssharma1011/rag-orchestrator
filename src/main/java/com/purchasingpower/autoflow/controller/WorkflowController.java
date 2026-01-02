@@ -23,9 +23,20 @@ import java.util.Optional;
 /**
  * REST controller for workflow operations.
  *
+ * @deprecated Use {@link com.purchasingpower.autoflow.api.ChatController} instead.
+ * This controller will be removed in a future release.
+ *
+ * Migration guide:
+ * - POST /api/v1/workflows/start → POST /api/v1/chat
+ * - POST /api/v1/workflows/{id}/respond → POST /api/v1/chat (with conversationId)
+ * - GET /api/v1/workflows/{id}/status → GET /api/v1/chat/{id}/status
+ * - GET /api/v1/workflows/{id}/stream → GET /api/v1/chat/{id}/stream
+ * - GET /api/v1/workflows/{id}/history → GET /api/v1/chat/{id}/history
+ *
  * IMPORTANT: Never calls setters on WorkflowState after LangGraph4j processing.
  * Uses Map manipulation to avoid UnsupportedOperationException.
  */
+@Deprecated(since = "2.0.0", forRemoval = true)
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/workflows")

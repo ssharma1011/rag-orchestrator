@@ -25,6 +25,16 @@ public interface ToolContext {
     List<String> getRepositoryIds();
 
     /**
+     * Repository URL for the current conversation.
+     */
+    String getRepositoryUrl();
+
+    /**
+     * Branch name for the repository (e.g., "main", "develop").
+     */
+    String getBranch();
+
+    /**
      * Get a context variable by key.
      *
      * @param key Variable key

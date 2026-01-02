@@ -18,4 +18,14 @@ public interface Tool {
     ToolResult execute(Map<String, Object> parameters, ToolContext context);
 
     ToolCategory getCategory();
+
+    /**
+     * Whether this tool requires the repository to be indexed.
+     * If true, IndexingInterceptor will auto-index before execution.
+     *
+     * @return true if tool needs indexed code, false otherwise
+     */
+    default boolean requiresIndexedRepo() {
+        return false;
+    }
 }

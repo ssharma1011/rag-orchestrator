@@ -84,18 +84,43 @@ public class SearchServiceImpl implements SearchService {
     public List<SearchResult> semanticSearch(String query, List<String> repositoryIds, int topK) {
         log.debug("Executing semantic search: {}", query);
 
-        // For now, fall back to structural search with CONTAINS
-        // TODO: Implement vector search when embeddings are added to Neo4j
-        String cypher = """
+        // Tokenize query into keywords (future-proof for hybrid search with embeddings)
+        List<String> keywords = tokenizeQuery(query);
+        log.debug("Tokenized query into keywords: {}", keywords);
+
+        if (keywords.isEmpty()) {
+            return List.of();
+        }
+
+        // Build WHERE clause with case-insensitive keyword matching
+        StringBuilder whereClause = new StringBuilder("WHERE (");
+        for (int i = 0; i < keywords.size(); i++) {
+            if (i > 0) whereClause.append(" OR ");
+            String keyword = keywords.get(i);
+            whereClause.append(String.format(
+                "toLower(e.name) CONTAINS toLower($kw%d) OR " +
+                "toLower(e.fullyQualifiedName) CONTAINS toLower($kw%d) OR " +
+                "toLower(e.sourceCode) CONTAINS toLower($kw%d)",
+                i, i, i
+            ));
+        }
+        whereClause.append(")");
+
+        if (repositoryIds != null && !repositoryIds.isEmpty()) {
+            whereClause.append(" AND e.repositoryId IN $repoIds");
+        }
+
+        String cypher = String.format("""
             MATCH (e:Entity)
-            WHERE (e.name CONTAINS $query OR e.fullyQualifiedName CONTAINS $query OR e.sourceCode CONTAINS $query)
-            """ + (repositoryIds != null && !repositoryIds.isEmpty() ? " AND e.repositoryId IN $repoIds" : "") + """
+            %s
             RETURN e
             LIMIT $limit
-            """;
+            """, whereClause);
 
         Map<String, Object> params = new HashMap<>();
-        params.put("query", query);
+        for (int i = 0; i < keywords.size(); i++) {
+            params.put("kw" + i, keywords.get(i));
+        }
         params.put("limit", topK);
         if (repositoryIds != null && !repositoryIds.isEmpty()) {
             params.put("repoIds", repositoryIds);
@@ -105,6 +130,8 @@ public class SearchServiceImpl implements SearchService {
 
         List<SearchResult> results = new ArrayList<>();
         for (var entity : entities) {
+            // Score by number of matching keywords
+            float score = calculateKeywordScore(entity, keywords);
             results.add(SearchResultImpl.builder()
                 .entityId(entity.getId())
                 .entityType(entity.getType())
@@ -112,10 +139,13 @@ public class SearchServiceImpl implements SearchService {
                 .fullyQualifiedName(entity.getFullyQualifiedName())
                 .filePath(entity.getFilePath())
                 .content(entity.getSourceCode())
-                .score(0.8f)
+                .score(score)
                 .searchMode(SearchMode.SEMANTIC)
                 .build());
         }
+
+        // Sort by score descending
+        results.sort((a, b) -> Float.compare(b.getScore(), a.getScore()));
 
         return results;
     }
@@ -232,5 +262,67 @@ public class SearchServiceImpl implements SearchService {
         }
 
         return new ArrayList<>(merged.values());
+    }
+
+    /**
+     * Tokenize query into searchable keywords.
+     * Removes stop words and splits on whitespace.
+     */
+    private List<String> tokenizeQuery(String query) {
+        if (query == null || query.isBlank()) {
+            return List.of();
+        }
+
+        // Common stop words to filter out
+        List<String> stopWords = List.of(
+            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "from", "this", "that", "these", "those",
+            "is", "are", "was", "were", "be", "been", "being",
+            "do", "does", "did", "have", "has", "had",
+            "what", "which", "who", "where", "when", "why", "how"
+        );
+
+        String[] words = query.toLowerCase().trim().split("\\s+");
+        List<String> keywords = new ArrayList<>();
+
+        for (String word : words) {
+            // Remove punctuation
+            word = word.replaceAll("[^a-z0-9]", "");
+
+            // Skip if empty, too short, or stop word
+            if (!word.isEmpty() && word.length() > 2 && !stopWords.contains(word)) {
+                keywords.add(word);
+            }
+        }
+
+        return keywords;
+    }
+
+    /**
+     * Calculate relevance score based on keyword matches.
+     */
+    private float calculateKeywordScore(com.purchasingpower.autoflow.core.CodeEntity entity, List<String> keywords) {
+        if (keywords.isEmpty()) {
+            return 0.5f;
+        }
+
+        int matches = 0;
+        String name = entity.getName() != null ? entity.getName().toLowerCase() : "";
+        String fqn = entity.getFullyQualifiedName() != null ? entity.getFullyQualifiedName().toLowerCase() : "";
+        String source = entity.getSourceCode() != null ? entity.getSourceCode().toLowerCase() : "";
+
+        for (String keyword : keywords) {
+            if (name.contains(keyword)) {
+                matches += 3; // Name match is most important
+            } else if (fqn.contains(keyword)) {
+                matches += 2; // FQN match is second
+            } else if (source.contains(keyword)) {
+                matches += 1; // Source code match is least important
+            }
+        }
+
+        // Normalize score to 0-1 range
+        float maxPossibleScore = keywords.size() * 3.0f;
+        return Math.min(1.0f, matches / maxPossibleScore);
     }
 }

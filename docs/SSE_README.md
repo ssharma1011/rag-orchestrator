@@ -71,7 +71,7 @@ Explains the onmessage vs addEventListener('workflow-update') issue.
 ---
 
 ### 5. Backend Test Script
-**File:** [test-sse.sh](test-sse.sh)
+**File:** [test-sse.sh](../test-sse.sh)
 
 Bash script to test SSE stream directly with curl.
 

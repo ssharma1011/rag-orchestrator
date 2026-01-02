@@ -9,6 +9,7 @@ import java.util.List;
  */
 public interface IndexingResult {
     boolean isSuccess();
+    String getRepositoryId();
     int getEntitiesCreated();
     int getRelationshipsCreated();
     int getEmbeddingsGenerated();

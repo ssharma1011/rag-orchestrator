@@ -1,0 +1,27 @@
+name: explain-tool
+version: v1
+description: Prompt for ExplainTool to explain code entities
+
+systemPrompt: |
+  Explain the following {{entityType}}:
+
+  Name: {{fullyQualifiedName}}
+  File: {{filePath}}
+
+  Source Code:
+  ```java
+  {{sourceCode}}
+  ```
+
+  {{#isDetailed}}
+  Provide a detailed explanation including:
+  1. Overall purpose
+  2. Key methods and their roles
+  3. Dependencies and integrations
+  4. Usage patterns
+  {{/isDetailed}}
+  {{^isDetailed}}
+  Provide a brief 2-3 sentence summary of what this code does.
+  {{/isDetailed}}
+
+userPrompt: ""

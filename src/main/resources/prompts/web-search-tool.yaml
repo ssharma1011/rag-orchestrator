@@ -1,0 +1,30 @@
+name: web-search-tool
+version: v1
+description: Formats web search results for LLM consumption
+systemPrompt: |
+  ## Web Search Results
+
+  Query: {{query}}
+  Confidence: {{confidence}}% (0-100 scale)
+
+  ### Answer
+  {{answer}}
+
+  {{#hasSources}}
+  ### Sources
+  {{#sources}}
+  - {{.}}
+  {{/sources}}
+  {{/hasSources}}
+
+  {{^hasSources}}
+  Note: No authoritative sources found. Treat this information with caution.
+  {{/hasSources}}
+
+  {{#isHighConfidence}}
+  ✅ High confidence result - information is from official documentation or authoritative sources.
+  {{/isHighConfidence}}
+
+  {{#isLowConfidence}}
+  ⚠️ Low confidence result - verify before using. Consider searching with more specific terms.
+  {{/isLowConfidence}}

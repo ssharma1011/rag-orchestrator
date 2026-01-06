@@ -53,4 +53,13 @@ public interface GitOperationsService {
      * @return Repository name
      */
     String extractRepoName(String repoUrl);
+
+    /**
+     * Clean up temporary workspace directory.
+     * Deletes the directory and all its contents.
+     *
+     * @param workspaceDir Workspace directory to delete
+     * @return true if cleanup successful, false otherwise
+     */
+    boolean cleanupWorkspace(File workspaceDir);
 }

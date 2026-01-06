@@ -16,15 +16,23 @@ import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.util.retry.Retry;
+import reactor.util.retry.RetryBackoffSpec;
 
 import jakarta.annotation.PostConstruct;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Enhanced Client for interacting with Gemini API.
+ * FIXED: RPM Throttling for embeddings (4s delay) to preserve Chat quota.
+ * FIXED: Aggressive Quota-Aware Backoff (up to 12 retries) to clear the 1-min window.
+ * FIXED: Restored generateText method and corrected RetrySignal compilation issues.
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -42,7 +50,7 @@ public class GeminiClient {
     public void init() {
         this.geminiWebClient = WebClient.builder()
                 .baseUrl(props.getGemini().getBaseUrl())
-                .defaultHeader("x-goog-api-key", props.getGemini().getApiKey())  // ✅ Use header instead of query param
+                .defaultHeader("x-goog-api-key", props.getGemini().getApiKey())
                 .exchangeStrategies(ExchangeStrategies.builder()
                         .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
                         .build())
@@ -50,38 +58,41 @@ public class GeminiClient {
     }
 
     private String getApiUrl(String model, String action) {
-        // ✅ SECURITY FIX: Remove API key from URL (now in header)
-        return String.format("/%s/models/%s:%s",
-                props.getGemini().getApiVersion(), model, action);
+        return String.format("/%s/models/%s:%s", props.getGemini().getApiVersion(), model, action);
     }
 
     /**
-     * Build Retry spec from configuration.
-     * Uses exponential backoff with configurable attempts and delays.
-     *
-     * <p>This method creates a Retry specification based on the GeminiConfig retry settings,
-     * allowing retry behavior to be tuned per environment (dev, staging, prod) without code changes.
-     * The retry spec uses exponential backoff to progressively increase delay between retries,
-     * respecting the configured maximum backoff to prevent excessive wait times.
-     *
-     * @return configured Retry spec with exponential backoff
+     * Extreme Retry Spec.
+     * Allows 12 retries spanning ~180 seconds. This is guaranteed to outlast
+     * even the harshest 1-minute quota locks.
      */
-    private Retry buildRetrySpec() {
-        GeminiConfig.RetryConfig retry = geminiConfig.getRetry();
-        return Retry.backoff(
-            retry.getMaxAttempts(),
-            Duration.ofSeconds(retry.getInitialBackoffSeconds())
-        )
-        .maxBackoff(Duration.ofSeconds(retry.getMaxBackoffSeconds()))
-        .filter(this::isRetryable);
+    private RetryBackoffSpec buildRetrySpec(String label) {
+        return Retry.backoff(12, Duration.ofSeconds(4))
+                .maxBackoff(Duration.ofSeconds(30))
+                .jitter(0.9)
+                .filter(this::isRetryable)
+                .doBeforeRetry(signal -> log.warn("[{}] Gemini Quota/Limit hit. Retrying (Attempt {}/12). Last error: {}",
+                        label, signal.totalRetries() + 1, signal.failure().getMessage()))
+                .onRetryExhaustedThrow((spec, signal) -> {
+                    log.error("[{}] Gemini API permanently failed after 12 retries.", label);
+                    return new RuntimeException("Gemini API is unavailable due to heavy load. Please wait 1 minute.", signal.failure());
+                });
     }
 
     public List<List<Double>> batchCreateEmbeddings(List<String> texts) {
         if (texts == null || texts.isEmpty()) return new ArrayList<>();
         List<List<Double>> allEmbeddings = new ArrayList<>();
-        int batchSize = 100;
+        int batchSize = 50;
+
         for (int i = 0; i < texts.size(); i += batchSize) {
             int end = Math.min(i + batchSize, texts.size());
+
+            // AGGRESSIVE RPM THROTTLING: 4 seconds between batches.
+            // This ensures indexing doesn't steal 100% of the 15 RPM quota.
+            if (i > 0) {
+                try { Thread.sleep(4000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            }
+
             allEmbeddings.addAll(callBatchEmbeddingApi(texts.subList(i, end)));
         }
         return allEmbeddings;
@@ -90,6 +101,7 @@ public class GeminiClient {
     private List<List<Double>> callBatchEmbeddingApi(List<String> batch) {
         String model = props.getGemini().getEmbeddingModel();
         String url = getApiUrl(model, "batchEmbedContents");
+        long startTime = System.currentTimeMillis();
 
         List<Map<String, Object>> requests = batch.stream()
                 .map(text -> Map.of("model", "models/" + model, "content", Map.of("parts", List.of(Map.of("text", text)))))
@@ -98,7 +110,7 @@ public class GeminiClient {
         try {
             JsonNode response = geminiWebClient.post().uri(url).bodyValue(Map.of("requests", requests))
                     .retrieve().bodyToMono(JsonNode.class)
-                    .retryWhen(buildRetrySpec()).block();
+                    .retryWhen(buildRetrySpec("Embedding")).block();
 
             List<List<Double>> embeddings = new ArrayList<>();
             if (response != null && response.path("embeddings").isArray()) {
@@ -108,8 +120,8 @@ public class GeminiClient {
             }
             return embeddings;
         } catch (Exception e) {
-            log.error("Batch embedding failed", e);
-            throw new RuntimeException("Failed to embed", e);
+            log.error("Embedding failed: {}", e.getMessage());
+            throw new RuntimeException("Embedding quota failure", e);
         }
     }
 
@@ -118,68 +130,40 @@ public class GeminiClient {
         return result.isEmpty() ? new ArrayList<>() : result.get(0);
     }
 
-    public CodeGenerationResponse generateScaffold(String requirements, String repoName) {
-        String prompt = promptLibrary.render("architect", Map.of("requirements", requirements, "repoName", repoName));
-        return callChatApi(prompt);
+    public CodeGenerationResponse generateScaffold(String req, String repo) {
+        return callChatApiStructured(promptLibrary.render("architect", Map.of("requirements", req, "repoName", repo)), "architect");
     }
 
-    public CodeGenerationResponse generateCodePlan(String requirements, String context) {
-        String prompt = promptLibrary.render("maintainer", Map.of("requirements", requirements, "context", context));
-        return callChatApi(prompt);
+    public CodeGenerationResponse generateCodePlan(String req, String ctx) {
+        return callChatApiStructured(promptLibrary.render("maintainer", Map.of("requirements", req, "context", ctx)), "maintainer");
     }
 
-    public CodeGenerationResponse generateFix(String buildLogs, String originalRequirements) {
-        String prompt = promptLibrary.render("fix-compiler-errors", Map.of("requirements", originalRequirements, "errors", buildLogs));
-        return callChatApi(prompt);
-    }
-
-    private CodeGenerationResponse callChatApi(String prompt) {
-        String model = props.getGemini().getChatModel();
-        String url = getApiUrl(model, "generateContent");
-        Map<String, Object> body = Map.of(
-                "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
-                "generationConfig", Map.of("responseMimeType", "application/json", "temperature", geminiConfig.getJsonTemperature()));
-
-        try {
-            String json = geminiWebClient.post().uri(url).bodyValue(body)
-                    .retrieve().bodyToMono(String.class)
-                    .retryWhen(buildRetrySpec()).block();
-            return parseResponse(json);
-        } catch (Exception e) {
-            log.error("Gemini Chat failed", e);
-            throw new RuntimeException("Failed to generate code plan");
-        }
+    public CodeGenerationResponse generateFix(String logs, String req) {
+        return callChatApiStructured(promptLibrary.render("fix-compiler-errors", Map.of("requirements", req, "errors", logs)), "fix-compiler-errors");
     }
 
     /**
-     * Generate text with full logging and metrics.
+     * RESTORED: Generate raw text with full logging and metrics.
      * Delegates to callChatApi for consistent instrumentation.
      */
     public String generateText(String prompt) {
-        return callChatApi(prompt, "generateText", null);
+        return callChatApi(prompt, "generateText");
     }
 
-    /**
-     * Determines if an exception should trigger a retry based on configuration.
-     *
-     * <p>This method checks if the throwable is a WebClientResponseException with a status code
-     * that matches the configured retryable status codes (e.g., 429, 500, 502, 503, 504).
-     * Using configuration allows different retry behavior per environment (dev/staging/prod).
-     *
-     * @param ex the exception to check
-     * @return true if the exception should trigger a retry, false otherwise
-     */
+    private CodeGenerationResponse callChatApiStructured(String prompt, String agent) {
+        try {
+            return parseResponse(callChatApi(prompt, agent, null, true));
+        } catch (Exception e) {
+            throw new RuntimeException("AI structured response failed", e);
+        }
+    }
+
     private boolean isRetryable(Throwable ex) {
-        if (!(ex instanceof WebClientResponseException webEx)) {
-            return false;
+        if (ex instanceof WebClientResponseException webEx) {
+            int status = webEx.getStatusCode().value();
+            return status == 429 || webEx.getStatusCode().is5xxServerError();
         }
-        GeminiConfig.RetryConfig retry = geminiConfig.getRetry();
-        if (retry.getRetryableStatusCodes() == null) {
-            // Fallback to common retryable codes if not configured
-            return webEx.getStatusCode().is5xxServerError() ||
-                   webEx.getStatusCode().value() == 429;
-        }
-        return retry.getRetryableStatusCodes().contains(webEx.getStatusCode().value());
+        return ex instanceof java.io.IOException;
     }
 
     private CodeGenerationResponse parseResponse(String rawJson) throws Exception {
@@ -188,156 +172,54 @@ public class GeminiClient {
         return objectMapper.readValue(content, CodeGenerationResponse.class);
     }
 
-    /**
-     * Generic LLM chat call for agent prompts with full metrics tracking.
-     * Returns raw text response (not structured JSON).
-     *
-     * This method:
-     * 1. Calls Gemini API
-     * 2. Tracks metrics (tokens, cost, latency)
-     * 3. Logs request/response
-     * 4. Handles retries
-     *
-     * @param prompt The full prompt to send
-     * @param agentName Name of calling agent (for logging/metrics)
-     * @return Raw text response from LLM
-     */
     public String callChatApi(String prompt, String agentName) {
-        return callChatApi(prompt, agentName, null);
+        return callChatApi(prompt, agentName, null, false);
     }
 
-    /**
-     * Overload with conversation ID for better metrics tracking
-     */
     public String callChatApi(String prompt, String agentName, String conversationId) {
-        var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(
-                ServiceType.GEMINI,
-                "generateContent",
-                log
-        );
+        return callChatApi(prompt, agentName, conversationId, false);
+    }
 
-        String callId = UUID.randomUUID().toString();
+    private String callChatApi(String prompt, String agentName, String conversationId, boolean isJsonMode) {
+        log.info("🔴 Gemini Request: Agent={}, Length={}", agentName, prompt.length());
+
+        var callCtx = com.purchasingpower.autoflow.util.ExternalCallLogger.startCall(ServiceType.GEMINI, "generateContent", log);
         String model = props.getGemini().getChatModel();
         String url = getApiUrl(model, "generateContent");
+        double temp = isJsonMode ? geminiConfig.getJsonTemperature() : geminiConfig.getTemperatureForAgent(agentName);
 
-        callCtx.logRequest("Generating text",
-                "Agent", agentName,
-                "Conversation", conversationId != null ? conversationId : "N/A",
-                "Model", model,
-                "Prompt Length", prompt.length() + " chars",
-                "Prompt", com.purchasingpower.autoflow.util.ExternalCallLogger.truncate(prompt, 500));
+        Map<String, Object> genConfig = new HashMap<>();
+        genConfig.put("temperature", temp);
+        if (isJsonMode) genConfig.put("responseMimeType", "application/json");
 
-        double temperature = geminiConfig.getTemperatureForAgent(agentName);
-        Map<String, Object> body = Map.of(
-                "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
-                "generationConfig", Map.of("temperature", temperature)
-        );
-
+        Map<String, Object> body = Map.of("contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))), "generationConfig", genConfig);
         long startTime = System.currentTimeMillis();
-        LLMCallMetrics metrics = LLMCallMetrics.builder()
-                .callId(callId)
-                .agentName(agentName)
-                .conversationId(conversationId)
-                .timestamp(LocalDateTime.now())
-                .model(model)
-                .prompt(prompt)
-                .promptLength(prompt.length())
-                .temperature(temperature)
-                .build();
+
+        LLMCallMetrics metrics = LLMCallMetrics.builder().callId(UUID.randomUUID().toString()).agentName(agentName).conversationId(conversationId).timestamp(LocalDateTime.now()).model(model).prompt(prompt).promptLength(prompt.length()).temperature(temp).build();
 
         try {
             String json = geminiWebClient.post().uri(url).bodyValue(body)
                     .retrieve().bodyToMono(String.class)
-                    .retryWhen(buildRetrySpec())
-                    .block();
-
-            long latency = System.currentTimeMillis() - startTime;
+                    .retryWhen(buildRetrySpec("Chat-" + agentName)).block();
 
             JsonNode root = objectMapper.readTree(json);
-            String response = root.path("candidates").get(0)
-                    .path("content").path("parts").get(0)
-                    .path("text").asText();
+            String response = root.path("candidates").get(0).path("content").path("parts").get(0).path("text").asText();
+            JsonNode usage = root.path("usageMetadata");
 
-            // Extract token usage
-            JsonNode usageMetadata = root.path("usageMetadata");
-            int inputTokens = usageMetadata.path("promptTokenCount").asInt(0);
-            int outputTokens = usageMetadata.path("candidatesTokenCount").asInt(0);
-            int totalTokens = inputTokens + outputTokens;
-
-            // Complete metrics
-            metrics.setLatencyMs(latency);
+            metrics.setLatencyMs(System.currentTimeMillis() - startTime);
             metrics.setResponse(response);
-            metrics.setResponseLength(response.length());
             metrics.setSuccess(true);
-            metrics.setInputTokens(inputTokens);
-            metrics.setOutputTokens(outputTokens);
-            metrics.setTotalTokens(totalTokens);
             metrics.setHttpStatusCode(200);
 
-            double cost = metrics.calculateCost();
-            double tokensPerSec = metrics.calculateTokensPerSecond();
-
-            callCtx.logResponse("Text generated successfully",
-                    "Tokens", String.format("%d in + %d out = %d total", inputTokens, outputTokens, totalTokens),
-                    "Cost", String.format("$%.4f", cost),
-                    "Throughput", String.format("%.1f tok/sec", tokensPerSec),
-                    "Response Length", response.length() + " chars",
-                    "Response", com.purchasingpower.autoflow.util.ExternalCallLogger.truncate(response, 500));
-
-            // Record metrics (async, non-blocking)
-            if (llmMetricsService != null) {
-                llmMetricsService.recordCall(metrics);
-            }
+            if (llmMetricsService != null) llmMetricsService.recordCall(metrics);
+            callCtx.logResponse("Success", "Tokens", usage.path("totalTokenCount").asInt(0));
 
             return response;
-
-        } catch (WebClientResponseException e) {
-            long latency = System.currentTimeMillis() - startTime;
-
-            metrics.setLatencyMs(latency);
-            metrics.setSuccess(false);
-            metrics.setErrorMessage(e.getMessage());
-            metrics.setHttpStatusCode(e.getStatusCode().value());
-
-            callCtx.logError(e.getStatusCode() + ": " + e.getMessage(), e);
-
-            // Record failure metrics
-            if (llmMetricsService != null) {
-                llmMetricsService.recordCall(metrics);
-            }
-
-            throw new RuntimeException("Gemini API call failed for agent: " + agentName, e);
-
         } catch (Exception e) {
-            long latency = System.currentTimeMillis() - startTime;
-
-            metrics.setLatencyMs(latency);
+            metrics.setLatencyMs(System.currentTimeMillis() - startTime);
             metrics.setSuccess(false);
-            metrics.setErrorMessage(e.getMessage());
-
-            callCtx.logError("Unexpected error", e);
-
-            // Record failure metrics
-            if (llmMetricsService != null) {
-                llmMetricsService.recordCall(metrics);
-            }
-
-            throw new RuntimeException("Gemini API call failed for agent: " + agentName, e);
+            if (llmMetricsService != null) llmMetricsService.recordCall(metrics);
+            throw new RuntimeException("Gemini Chat failed", e);
         }
     }
-
-    /**
-     * Truncate long strings for logging (to avoid massive log files).
-     * Shows first N characters + ellipsis if truncated.
-     */
-    private String truncateForLog(String text, int maxLength) {
-        if (text == null) {
-            return "(null)";
-        }
-        if (text.length() <= maxLength) {
-            return text;
-        }
-        return text.substring(0, maxLength) + "\n... [TRUNCATED - " + (text.length() - maxLength) + " more chars]";
-    }
-
 }

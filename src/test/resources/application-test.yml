@@ -1,0 +1,41 @@
+# Test profile with H2 in-memory database
+# Avoids needing Oracle/Neo4j for unit tests
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=Oracle
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+        format_sql: false
+    show-sql: false
+
+  h2:
+    console:
+      enabled: false
+
+  # Mock Neo4j - tests will use mocked GraphStore
+  neo4j:
+    uri: bolt://localhost:7687
+    authentication:
+      username: neo4j
+      password: test
+
+# Disable external services for tests
+app:
+  workspace-dir: ${java.io.tmpdir}/autoflow-test
+  gemini:
+    api-key: test-key
+    chat-model: gemini-flash-latest
+
+logging:
+  level:
+    root: WARN
+    com.purchasingpower.autoflow: INFO

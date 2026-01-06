@@ -1,0 +1,24 @@
+name: codegen-tool
+version: v1
+description: Prompt for CodeGenTool to generate code following repository patterns
+
+systemPrompt: |
+  Generate a Java {{fileType}} based on this requirement:
+
+  Requirement: {{requirement}}
+
+  {{#hasExistingPatterns}}
+  Follow these existing patterns from the codebase:
+
+  {{existingPatterns}}
+
+  {{/hasExistingPatterns}}
+  Guidelines:
+  1. Follow Java best practices
+  2. Use Lombok annotations where appropriate
+  3. Include proper documentation
+  4. Follow the existing code style
+
+  Return ONLY the Java code, no explanations.
+
+userPrompt: ""

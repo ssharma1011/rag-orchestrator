@@ -6,7 +6,6 @@ spring:
   application:
     name: ai-rag-orchestrator
 
-
   # ==============================================================
   # ORACLE DATABASE CONFIGURATION
   # ==============================================================
@@ -15,21 +14,21 @@ spring:
     username: ${DB_USER:autoflow}
     password: ${DB_PASS:autoflow123}
     driver-class-name: oracle.jdbc.OracleDriver
-##    hikari:
-##      maximum-pool-size: 20
-##      minimum-idle: 5
-##      connection-timeout: 30000
-##      # Oracle Validation Query
-##      connection-test-query: SELECT 1 FROM DUAL
-#
+    # FIXED: Increased pool size to prevent deadlocks during multi-threaded indexing
+    hikari:
+      maximum-pool-size: 30
+      minimum-idle: 10
+      connection-timeout: 30000
+      connection-test-query: SELECT 1 FROM DUAL
+
   jpa:
     open-in-view: false
     show-sql: false
     hibernate:
-      ddl-auto: validate # Use 'update' in development, # Use 'validate' in production
+      ddl-auto: validate
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.OracleDialect
+#        dialect: org.hibernate.dialect.OracleDialect
         format_sql: true
 
   # ==============================================================
@@ -45,13 +44,49 @@ spring:
 # CUSTOM APP PROPERTIES
 # ==============================================================
 app:
+  # LLM PROVIDER OPTIONS:
+  #   'gemini' - Fast cloud API (429 rate limit issues)
+  #   'ollama' - Local model (7B is fast, 32B is slow)
+  #   'hybrid' - Ollama for tool selection (fast), Gemini for final response (quality)
+  llm-provider: ${LLM_PROVIDER:hybrid}  # HYBRID: Ollama for tools, Gemini for final response
+
   workspace-dir: ${WORKSPACE_DIR:/tmp/ai-orchestrator-workspace}
+
+  # ==============================================================
+  # OLLAMA CONFIGURATION (Local AI)
+  # ==============================================================
+  ollama:
+    base-url: http://localhost:11434
+    chat-model: qwen2.5-coder:7b  # UPGRADED: Better explanations (was 1.5b)
+    embedding-model: mxbai-embed-large
+    num-ctx: 32768  # Large context for viewing entire classes
+    timeout-seconds: 120  # LangChain4j: Request timeout
+    max-retries: 3  # LangChain4j: Automatic retries on failure
+
+  # ==============================================================
+  # GEMINI CONFIGURATION (Cloud Backup)
+  # ==============================================================
+  gemini:
+    api-key: ${GEMINI_KEY}
+    chat-model: gemini-flash-latest
+    embedding-model: text-embedding-004
+    default-temperature: 0.7
+    json-temperature: 0.2
+    agent-temperatures:
+      code-generator: 0.3
+      documentation: 0.8
+      scope-discovery: 0.5
+      requirement-analyzer: 0.0
+    retry:
+      max-attempts: 6
+      initial-backoff-seconds: 10
+      max-backoff-seconds: 65
+
   git:
     default-prefix: "feature/"
     prefixes:
       "Story": "feature/"
       "Bug": "bugfix/"
-    # Git provider URL parsing strategies
     providers:
       github:
         pattern: "github.com"
@@ -69,6 +104,7 @@ app:
         pattern: "dev.azure.com"
         branch-separator: "?version=GB"
         default-branch: "main"
+
   jira:
     base-url: https://${JIRA_DOMAIN}.atlassian.net
     username: ${JIRA_USER}
@@ -86,26 +122,6 @@ app:
     app-password: ${BITBUCKET_PASS}
     api-username: ${BITBUCKET_API_USER}
 
-  gemini:
-    api-key: ${GEMINI_KEY}
-    chat-model: gemini-flash-latest
-    embedding-model: text-embedding-004
-    # Temperature settings per agent type
-    default-temperature: 0.7
-    json-temperature: 0.2  # Lower for structured JSON output
-    agent-temperatures:
-      code-generator: 0.3  # More deterministic for code generation
-      documentation: 0.8   # More creative for documentation
-      scope-discovery: 0.5 # Balanced for discovery
-      requirement-analyzer: 0.0  # Fully deterministic for classification
-    # Retry configuration
-    retry:
-      max-attempts: 3
-      initial-backoff-seconds: 2
-      max-backoff-seconds: 30
-      multiplier: 2.0
-      retryable-status-codes: [429, 500, 502, 503, 504]
-
   # ==============================================================
   # CODE QUALITY & GENERATION SETTINGS
   # ==============================================================
@@ -118,7 +134,7 @@ app:
     enforce-immutable-dtos: true
     forbid-null-returns: true
     forbid-if-else-chains: true
-    min-if-else-for-strategy: 3  # Use Strategy pattern if 3+ branches
+    min-if-else-for-strategy: 3
 
     compilation:
       enabled: true
@@ -132,15 +148,14 @@ app:
       fail-on-violations: true
 
   # ==============================================================
-  # WEB SEARCH FOR LATEST LIBRARY APIs
+  # WEB SEARCH SETTINGS
   # ==============================================================
   web-search:
     enabled: ${WEB_SEARCH_ENABLED:false}
-    provider: tavily  # Options: tavily, serpapi, google
+    provider: tavily
     api-key: ${TAVILY_API_KEY:}
     max-results: 5
     timeout-seconds: 10
-    # Trigger web search if compilation error matches these patterns
     trigger-patterns:
       - "cannot find symbol"
       - "incompatible types"
@@ -148,19 +163,9 @@ app:
       - "package .* does not exist"
 
   # ==============================================================
-  # RETRY CONFIGURATION (Global defaults)
-  # ==============================================================
-  retry:
-    max-attempts: 3
-    backoff-ms: 1000
-    max-backoff-ms: 10000
-    multiplier: 2.0
-
-  # ==============================================================
   # AGENT-SPECIFIC CONFIGURATIONS
   # ==============================================================
   agents:
-    # Scope Discovery Agent - Search and similarity thresholds
     scope-discovery:
       max-files: 7
       max-classes: 3
@@ -174,32 +179,26 @@ app:
         top-score-multiplier: 0.7
       default-architecture: "Spring Boot MVC"
 
-    # Requirement Analyzer - Confidence thresholds
     requirement-analyzer:
       min-confidence: 0.7
 
-    # Context Builder - Token budget and confidence
     context-builder:
       min-confidence: 0.9
       ask-user-below-threshold: true
-      max-token-budget: 10000
+      max-token-budget: 15000
 
-    # Build Validator - Retry and timeout
     build:
       max-retry-attempts: 3
       timeout-minutes: 10
 
-    # PR Reviewer - Retry configuration
     code-review:
       max-retry-attempts: 2
 
-    # Documentation Agent - Limits for code retrieval
     documentation:
       max-code-matches: 10
       max-fallback-nodes: 20
       max-log-preview: 5
 
-    # Test Runner - OS-specific shell configuration
     test-runner:
       shell-windows: "cmd.exe"
       shell-flag-windows: "/c"
@@ -208,10 +207,10 @@ app:
       test-command: "mvn -B test"
       timeout-minutes: 30
 
-
 logging:
   level:
     root: INFO
     com.purchasingpower.autoflow: DEBUG
     com.purchasingpower.autoflow.workflow.agents: DEBUG
     org.bsc.langgraph4j: DEBUG
+    org.springframework.web.reactive.function.client.WebClient: WARN

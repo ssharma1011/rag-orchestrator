@@ -59,4 +59,37 @@ public interface ToolContext {
      * Get recent code modifications (for undo/verification).
      */
     List<?> getRecentModifications();
+
+    /**
+     * Record a tool execution for tracking and learning.
+     *
+     * @param toolName Name of the tool that was executed
+     * @param result Result of the execution
+     * @param userFeedback Optional user feedback ("better", "more detail", etc.)
+     */
+    void recordToolExecution(String toolName, Object result, String userFeedback);
+
+    /**
+     * Get the number of times a specific tool has been executed in this context.
+     *
+     * @param toolName Name of the tool
+     * @return Execution count
+     */
+    int getToolExecutionCount(String toolName);
+
+    /**
+     * Check if there's negative feedback in recent conversation messages.
+     * Looks for phrases like "better", "more detail", "different approach", etc.
+     *
+     * @return true if user wants improved results
+     */
+    boolean hasNegativeFeedback();
+
+    /**
+     * Get the last execution result for a specific tool.
+     *
+     * @param toolName Name of the tool
+     * @return Last execution result or null
+     */
+    Object getLastToolResult(String toolName);
 }

@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tree:*)",
+      "Bash(./mvnw compile:*)",
+      "Bash(mvn compile:*)",
+      "Bash(dir \"C:\\\\Users\\\\ssharma\\\\personal\\\\rag-orchestrator\" /s /b)",
+      "Bash(findstr:*)",
+      "Bash(mvn:*)",
+      "Bash(java:*)",
+      "Bash(dir \"C:\\\\Users\\\\ssharma\\\\personal\\\\rag-orchestrator\\\\pom.xml\")",
+      "Bash(dir:*)",
+      "Bash(mkdir:*)",
+      "Bash(timeout /t 30)",
+      "Bash(curl:*)",
+      "WebSearch",
+      "Skill(project-knowledge)",
+      "Bash(javac:*)",
+      "Bash(ping:*)",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)",
+      "Bash(cmd //c taskkill //F //PID 50368)",
+      "Bash(git add:*)",
+      "Bash(del nul)",
+      "Bash(git rm:*)"
+    ]
+  }
+}

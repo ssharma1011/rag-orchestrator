@@ -3,6 +3,7 @@ package com.purchasingpower.autoflow.knowledge;
 import com.purchasingpower.autoflow.core.CodeEntity;
 import com.purchasingpower.autoflow.core.EntityType;
 import com.purchasingpower.autoflow.core.Repository;
+import com.purchasingpower.autoflow.model.java.JavaClass;
 
 import java.util.List;
 import java.util.Map;
@@ -38,4 +39,30 @@ public interface GraphStore {
     List<CodeEntity> executeCypherQuery(String cypher, Map<String, Object> parameters);
 
     List<Map<String, Object>> executeCypherQueryRaw(String cypher, Map<String, Object> parameters);
+
+    /**
+     * Execute a write Cypher query (for DELETE, CREATE, MERGE, SET operations).
+     *
+     * @param cypher the Cypher query
+     * @param parameters query parameters
+     * @return number of affected nodes
+     */
+    int executeCypherWrite(String cypher, Map<String, Object> parameters);
+
+    // ========== NEW SCHEMA: Type, Method, Field, Annotation ==========
+
+    /**
+     * Store a Java class with all its methods, fields, and annotations.
+     * Creates Type, Method, Field, and Annotation nodes with relationships.
+     *
+     * @param javaClass the parsed Java class
+     */
+    void storeJavaClass(JavaClass javaClass);
+
+    /**
+     * Store multiple Java classes in batch.
+     *
+     * @param javaClasses list of parsed Java classes
+     */
+    void storeJavaClasses(List<JavaClass> javaClasses);
 }

@@ -7,6 +7,9 @@ import com.purchasingpower.autoflow.core.impl.CodeEntityImpl;
 import com.purchasingpower.autoflow.core.impl.RepositoryImpl;
 import com.purchasingpower.autoflow.knowledge.GraphStore;
 import com.purchasingpower.autoflow.knowledge.RelationshipDirection;
+import com.purchasingpower.autoflow.model.java.JavaClass;
+import com.purchasingpower.autoflow.model.java.JavaField;
+import com.purchasingpower.autoflow.model.java.JavaMethod;
 import lombok.extern.slf4j.Slf4j;
 import org.neo4j.driver.AuthTokens;
 import org.neo4j.driver.Driver;
@@ -65,13 +68,69 @@ public class Neo4jGraphStoreImpl implements GraphStore {
 
     private void createIndexes() {
         try (Session session = driver.session()) {
+            // Repository indexes
             session.run("CREATE INDEX repo_id IF NOT EXISTS FOR (r:Repository) ON (r.id)");
+
+            // OLD SCHEMA: Keep for backwards compatibility
             session.run("CREATE INDEX entity_id IF NOT EXISTS FOR (e:Entity) ON (e.id)");
             session.run("CREATE INDEX entity_repo IF NOT EXISTS FOR (e:Entity) ON (e.repositoryId)");
             session.run("CREATE INDEX entity_fqn IF NOT EXISTS FOR (e:Entity) ON (e.fullyQualifiedName)");
-            log.info("Neo4j indexes created");
+
+            // NEW SCHEMA: Type, Method, Field, Annotation indexes
+            session.run("CREATE INDEX type_id IF NOT EXISTS FOR (t:Type) ON (t.id)");
+            session.run("CREATE INDEX type_repo IF NOT EXISTS FOR (t:Type) ON (t.repositoryId)");
+            session.run("CREATE INDEX type_fqn IF NOT EXISTS FOR (t:Type) ON (t.fqn)");
+            session.run("CREATE INDEX type_name IF NOT EXISTS FOR (t:Type) ON (t.name)");
+
+            session.run("CREATE INDEX method_id IF NOT EXISTS FOR (m:Method) ON (m.id)");
+            session.run("CREATE INDEX method_repo IF NOT EXISTS FOR (m:Method) ON (m.repositoryId)");
+            session.run("CREATE INDEX method_name IF NOT EXISTS FOR (m:Method) ON (m.name)");
+
+            session.run("CREATE INDEX field_id IF NOT EXISTS FOR (f:Field) ON (f.id)");
+            session.run("CREATE INDEX field_repo IF NOT EXISTS FOR (f:Field) ON (f.repositoryId)");
+
+            session.run("CREATE INDEX annotation_id IF NOT EXISTS FOR (a:Annotation) ON (a.id)");
+            session.run("CREATE INDEX annotation_fqn IF NOT EXISTS FOR (a:Annotation) ON (a.fqn)");
+            session.run("CREATE INDEX annotation_repo IF NOT EXISTS FOR (a:Annotation) ON (a.repositoryId)");
+
+            log.info("✅ Neo4j property indexes created");
+
+            // VECTOR INDEXES for semantic search
+            createVectorIndexes(session);
+
         } catch (Exception e) {
-            log.warn("Failed to create indexes: {}", e.getMessage());
+            log.warn("⚠️  Failed to create indexes: {}", e.getMessage());
+        }
+    }
+
+    private void createVectorIndexes(Session session) {
+        try {
+            // Create vector index for Type embeddings (1024 dimensions for mxbai-embed-large)
+            String typeVectorIndex = """
+                CREATE VECTOR INDEX type_embedding_index IF NOT EXISTS
+                FOR (t:Type) ON (t.embedding)
+                OPTIONS {indexConfig: {
+                  `vector.dimensions`: 1024,
+                  `vector.similarity_function`: 'cosine'
+                }}
+                """;
+            session.run(typeVectorIndex);
+            log.info("✅ Created vector index: type_embedding_index");
+
+            // Create vector index for Method embeddings
+            String methodVectorIndex = """
+                CREATE VECTOR INDEX method_embedding_index IF NOT EXISTS
+                FOR (m:Method) ON (m.embedding)
+                OPTIONS {indexConfig: {
+                  `vector.dimensions`: 1024,
+                  `vector.similarity_function`: 'cosine'
+                }}
+                """;
+            session.run(methodVectorIndex);
+            log.info("✅ Created vector index: method_embedding_index");
+
+        } catch (Exception e) {
+            log.warn("⚠️  Failed to create vector indexes (may require Neo4j 5.x+): {}", e.getMessage());
         }
     }
 
@@ -283,6 +342,11 @@ public class Neo4jGraphStoreImpl implements GraphStore {
 
     @Override
     public List<CodeEntity> executeCypherQuery(String cypher, Map<String, Object> parameters) {
+        log.info("📊 [GRAPH DB REQUEST] Executing Cypher query");
+        log.debug("📊 [GRAPH DB REQUEST] Query: {}", cypher);
+        log.debug("📊 [GRAPH DB REQUEST] Parameters: {}", parameters);
+
+        long startTime = System.currentTimeMillis();
         try (Session session = driver.session()) {
             return session.executeRead(tx -> {
                 Result result = tx.run(cypher, parameters != null ? parameters : Map.of());
@@ -293,6 +357,14 @@ public class Neo4jGraphStoreImpl implements GraphStore {
                         entities.add(nodeToCodeEntity(record.get("e").asNode()));
                     }
                 }
+
+                long duration = System.currentTimeMillis() - startTime;
+                log.info("📊 [GRAPH DB RESPONSE] Query completed in {}ms, Returned {} entities", duration, entities.size());
+                log.debug("📊 [GRAPH DB RESPONSE] Entities: {}", entities.stream()
+                    .map(CodeEntity::getFullyQualifiedName)
+                    .limit(10)
+                    .toList());
+
                 return entities;
             });
         }
@@ -300,6 +372,11 @@ public class Neo4jGraphStoreImpl implements GraphStore {
 
     @Override
     public List<Map<String, Object>> executeCypherQueryRaw(String cypher, Map<String, Object> parameters) {
+        log.info("📊 [GRAPH DB REQUEST RAW] Executing raw Cypher query");
+        log.debug("📊 [GRAPH DB REQUEST RAW] Query: {}", cypher);
+        log.debug("📊 [GRAPH DB REQUEST RAW] Parameters: {}", parameters);
+
+        long startTime = System.currentTimeMillis();
         try (Session session = driver.session()) {
             return session.executeRead(tx -> {
                 Result result = tx.run(cypher, parameters != null ? parameters : Map.of());
@@ -307,7 +384,36 @@ public class Neo4jGraphStoreImpl implements GraphStore {
                 while (result.hasNext()) {
                     results.add(result.next().asMap());
                 }
+
+                long duration = System.currentTimeMillis() - startTime;
+                log.info("📊 [GRAPH DB RESPONSE RAW] Query completed in {}ms, Returned {} rows", duration, results.size());
+                if (!results.isEmpty()) {
+                    log.debug("📊 [GRAPH DB RESPONSE RAW] First row keys: {}", results.get(0).keySet());
+                }
+
                 return results;
+            });
+        }
+    }
+
+    @Override
+    public int executeCypherWrite(String cypher, Map<String, Object> parameters) {
+        log.info("✍️  [GRAPH DB WRITE] Executing write Cypher query");
+        log.debug("✍️  [GRAPH DB WRITE] Query: {}", cypher);
+        log.debug("✍️  [GRAPH DB WRITE] Parameters: {}", parameters);
+
+        long startTime = System.currentTimeMillis();
+        try (Session session = driver.session()) {
+            return session.executeWrite(tx -> {
+                Result result = tx.run(cypher, parameters != null ? parameters : Map.of());
+                int nodesAffected = result.consume().counters().nodesDeleted() +
+                                  result.consume().counters().nodesCreated();
+
+                long duration = System.currentTimeMillis() - startTime;
+                log.info("✍️  [GRAPH DB WRITE] Write completed in {}ms, {} nodes affected",
+                    duration, nodesAffected);
+
+                return nodesAffected;
             });
         }
     }
@@ -341,7 +447,7 @@ public class Neo4jGraphStoreImpl implements GraphStore {
             .type(parseEntityType(getStringValue(node, "type")))
             .repositoryId(getStringValue(node, "repositoryId"))
             .name(getStringValue(node, "name"))
-            .fullyQualifiedName(getStringValue(node, "fullyQualifiedName"))
+            .fullyQualifiedName(getStringValue(node, "fqn"))  // FIX: Changed from "fullyQualifiedName" to "fqn"
             .filePath(getStringValue(node, "filePath"))
             .startLine(getIntValue(node, "startLine"))
             .endLine(getIntValue(node, "endLine"))
@@ -352,7 +458,8 @@ public class Neo4jGraphStoreImpl implements GraphStore {
     }
 
     private String getStringValue(Node node, String key) {
-        return node.containsKey(key) && !node.get(key).isNull() ? node.get(key).asString() : "";
+        // FIX: Return null instead of empty string to properly handle CONTAINS queries
+        return node.containsKey(key) && !node.get(key).isNull() ? node.get(key).asString() : null;
     }
 
     private int getIntValue(Node node, String key) {
@@ -361,7 +468,7 @@ public class Neo4jGraphStoreImpl implements GraphStore {
 
     private List<String> getListValue(Node node, String key) {
         if (node.containsKey(key) && !node.get(key).isNull()) {
-            return node.get(key).asList(v -> v.asString());
+            return node.get(key).asList(org.neo4j.driver.Value::asString);
         }
         return new ArrayList<>();
     }
@@ -391,5 +498,232 @@ public class Neo4jGraphStoreImpl implements GraphStore {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    // ========== NEW SCHEMA IMPLEMENTATION ==========
+
+    @Override
+    public void storeJavaClass(JavaClass javaClass) {
+        log.info("📦 Storing JavaClass: {}", javaClass.getFullyQualifiedName());
+
+        try (Session session = driver.session()) {
+            session.executeWrite(tx -> {
+                storeTypeNode(tx, javaClass);
+                storeMethods(tx, javaClass);
+                storeFields(tx, javaClass);
+                storeAnnotationsForClass(tx, javaClass);
+                return null;
+            });
+
+            log.debug("✅ Stored class {} with {} methods, {} fields",
+                javaClass.getFullyQualifiedName(),
+                javaClass.getMethods().size(),
+                javaClass.getFields().size());
+        }
+    }
+
+    @Override
+    public void storeJavaClasses(List<JavaClass> javaClasses) {
+        log.info("📂 Storing {} Java classes", javaClasses.size());
+
+        for (JavaClass javaClass : javaClasses) {
+            try {
+                storeJavaClass(javaClass);
+            } catch (Exception e) {
+                log.error("❌ Failed to store {}: {}",
+                    javaClass.getFullyQualifiedName(), e.getMessage());
+            }
+        }
+
+        log.info("✅ Completed storing {} classes", javaClasses.size());
+    }
+
+    private void storeTypeNode(org.neo4j.driver.TransactionContext tx, JavaClass javaClass) {
+        String cypher = """
+            MERGE (t:Type {id: $id})
+            SET t.repositoryId = $repositoryId,
+                t.name = $name,
+                t.packageName = $packageName,
+                t.fqn = $fqn,
+                t.filePath = $filePath,
+                t.startLine = $startLine,
+                t.endLine = $endLine,
+                t.kind = $kind,
+                t.extendsClass = $extendsClass,
+                t.implementsInterfaces = $implementsInterfaces,
+                t.description = $description,
+                t.embedding = $embedding
+            """;
+
+        tx.run(cypher, createParams(
+            "id", javaClass.getId(),
+            "repositoryId", javaClass.getRepositoryId(),
+            "name", javaClass.getName(),
+            "packageName", javaClass.getPackageName(),
+            "fqn", javaClass.getFullyQualifiedName(),
+            "filePath", javaClass.getFilePath(),
+            "startLine", javaClass.getStartLine(),
+            "endLine", javaClass.getEndLine(),
+            "kind", javaClass.getKind().name(),
+            "extendsClass", javaClass.getExtendsClass(),
+            "implementsInterfaces", javaClass.getImplementsInterfaces(),
+            "description", javaClass.getDescription(),
+            "embedding", javaClass.getEmbedding() != null ? javaClass.getEmbedding() : List.of()
+        ));
+    }
+
+    private void storeMethods(org.neo4j.driver.TransactionContext tx, JavaClass javaClass) {
+        for (JavaMethod method : javaClass.getMethods()) {
+            storeMethodNode(tx, method, javaClass);
+            storeMethodRelationships(tx, method, javaClass);
+            storeAnnotationsForMethod(tx, method, javaClass);
+        }
+    }
+
+    private void storeMethodNode(org.neo4j.driver.TransactionContext tx,
+                                   JavaMethod method, JavaClass javaClass) {
+        String cypher = """
+            MERGE (m:Method {id: $id})
+            SET m.repositoryId = $repositoryId,
+                m.name = $name,
+                m.signature = $signature,
+                m.returnType = $returnType,
+                m.startLine = $startLine,
+                m.endLine = $endLine,
+                m.description = $description,
+                m.embedding = $embedding
+            """;
+
+        tx.run(cypher, createParams(
+            "id", method.getId(),
+            "repositoryId", javaClass.getRepositoryId(),
+            "name", method.getName(),
+            "signature", method.getSignature(),
+            "returnType", method.getReturnType(),
+            "startLine", method.getStartLine(),
+            "endLine", method.getEndLine(),
+            "description", method.getDescription(),
+            "embedding", method.getEmbedding() != null ? method.getEmbedding() : List.of()
+        ));
+
+        // Create DECLARES relationship
+        String declaresRel = """
+            MATCH (t:Type {id: $classId})
+            MATCH (m:Method {id: $methodId})
+            MERGE (t)-[:DECLARES]->(m)
+            """;
+        tx.run(declaresRel, Map.of("classId", javaClass.getId(), "methodId", method.getId()));
+    }
+
+    private void storeMethodRelationships(org.neo4j.driver.TransactionContext tx,
+                                           JavaMethod method, JavaClass javaClass) {
+        // Store CALLS relationships for method calls
+        for (String calledMethodName : method.getMethodCalls()) {
+            String callsRel = """
+                MATCH (m:Method {id: $methodId})
+                MERGE (m)-[:CALLS {methodName: $calledMethodName}]->(m)
+                """;
+            tx.run(callsRel, Map.of(
+                "methodId", method.getId(),
+                "calledMethodName", calledMethodName
+            ));
+        }
+    }
+
+    private void storeFields(org.neo4j.driver.TransactionContext tx, JavaClass javaClass) {
+        for (JavaField field : javaClass.getFields()) {
+            storeFieldNode(tx, field, javaClass);
+            storeAnnotationsForField(tx, field, javaClass);
+        }
+    }
+
+    private void storeFieldNode(org.neo4j.driver.TransactionContext tx,
+                                 JavaField field, JavaClass javaClass) {
+        String cypher = """
+            MERGE (f:Field {id: $id})
+            SET f.repositoryId = $repositoryId,
+                f.name = $name,
+                f.type = $type,
+                f.lineNumber = $lineNumber
+            """;
+
+        tx.run(cypher, createParams(
+            "id", field.getId(),
+            "repositoryId", javaClass.getRepositoryId(),
+            "name", field.getName(),
+            "type", field.getType(),
+            "lineNumber", field.getLineNumber()
+        ));
+
+        // Create DECLARES relationship
+        String declaresRel = """
+            MATCH (t:Type {id: $classId})
+            MATCH (f:Field {id: $fieldId})
+            MERGE (t)-[:DECLARES]->(f)
+            """;
+        tx.run(declaresRel, Map.of("classId", javaClass.getId(), "fieldId", field.getId()));
+    }
+
+    private void storeAnnotationsForClass(org.neo4j.driver.TransactionContext tx,
+                                           JavaClass javaClass) {
+        for (String annotation : javaClass.getAnnotations()) {
+            storeAnnotation(tx, annotation, javaClass.getRepositoryId());
+            linkAnnotationToType(tx, annotation, javaClass.getId(), javaClass.getRepositoryId());
+        }
+    }
+
+    private void storeAnnotationsForMethod(org.neo4j.driver.TransactionContext tx,
+                                            JavaMethod method, JavaClass javaClass) {
+        for (String annotation : method.getAnnotations()) {
+            storeAnnotation(tx, annotation, javaClass.getRepositoryId());
+            linkAnnotationToMethod(tx, annotation, method.getId(), javaClass.getRepositoryId());
+        }
+    }
+
+    private void storeAnnotationsForField(org.neo4j.driver.TransactionContext tx,
+                                           JavaField field, JavaClass javaClass) {
+        for (String annotation : field.getAnnotations()) {
+            storeAnnotation(tx, annotation, javaClass.getRepositoryId());
+            linkAnnotationToField(tx, annotation, field.getId(), javaClass.getRepositoryId());
+        }
+    }
+
+    private void storeAnnotation(org.neo4j.driver.TransactionContext tx,
+                                  String annotation, String repositoryId) {
+        String cypher = """
+            MERGE (a:Annotation {fqn: $fqn, repositoryId: $repositoryId})
+            ON CREATE SET a.id = randomUUID()
+            """;
+        tx.run(cypher, Map.of("fqn", annotation, "repositoryId", repositoryId));
+    }
+
+    private void linkAnnotationToType(org.neo4j.driver.TransactionContext tx,
+                                       String annotation, String typeId, String repositoryId) {
+        String cypher = """
+            MATCH (t:Type {id: $typeId})
+            MATCH (a:Annotation {fqn: $fqn, repositoryId: $repositoryId})
+            MERGE (t)-[:ANNOTATED_BY]->(a)
+            """;
+        tx.run(cypher, Map.of("typeId", typeId, "fqn", annotation, "repositoryId", repositoryId));
+    }
+
+    private void linkAnnotationToMethod(org.neo4j.driver.TransactionContext tx,
+                                         String annotation, String methodId, String repositoryId) {
+        String cypher = """
+            MATCH (m:Method {id: $methodId})
+            MATCH (a:Annotation {fqn: $fqn, repositoryId: $repositoryId})
+            MERGE (m)-[:ANNOTATED_BY]->(a)
+            """;
+        tx.run(cypher, Map.of("methodId", methodId, "fqn", annotation, "repositoryId", repositoryId));
+    }
+
+    private void linkAnnotationToField(org.neo4j.driver.TransactionContext tx,
+                                        String annotation, String fieldId, String repositoryId) {
+        String cypher = """
+            MATCH (f:Field {id: $fieldId})
+            MATCH (a:Annotation {fqn: $fqn, repositoryId: $repositoryId})
+            MERGE (f)-[:ANNOTATED_BY]->(a)
+            """;
+        tx.run(cypher, Map.of("fieldId", fieldId, "fqn", annotation, "repositoryId", repositoryId));
     }
 }

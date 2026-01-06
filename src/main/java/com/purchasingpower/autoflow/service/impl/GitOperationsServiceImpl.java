@@ -237,6 +237,24 @@ public class GitOperationsServiceImpl implements GitOperationsService {
         return name;
     }
 
+    @Override
+    public boolean cleanupWorkspace(File workspaceDir) {
+        if (workspaceDir == null || !workspaceDir.exists()) {
+            log.debug("Workspace does not exist, no cleanup needed: {}", workspaceDir);
+            return true;
+        }
+
+        try {
+            log.info("Cleaning up workspace: {}", workspaceDir.getAbsolutePath());
+            FileSystemUtils.deleteRecursively(workspaceDir);
+            log.info("Successfully cleaned up workspace: {}", workspaceDir.getName());
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to cleanup workspace {}: {}", workspaceDir.getAbsolutePath(), e.getMessage());
+            return false;
+        }
+    }
+
     // ================================================================
     // HELPER METHODS
     // ================================================================
